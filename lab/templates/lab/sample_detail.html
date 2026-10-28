@@ -120,11 +120,18 @@
       <h2>Details <a href="{% url 'lab:sample_edit' sample.pk %}" style="font-size: 13px; font-weight: 400;">Edit</a></h2>
       <dl class="info">
         <dt>Received</dt><dd>{{ sample.received_on|date:"m/d/Y" }} (Julian {{ sample.julian }})</dd>
-        <dt>Type</dt><dd>{{ sample.get_sample_type_display }}{% if sample.phase %}, {{ sample.get_phase_display }}{% endif %}</dd>
+        {% if sample.sampled_on %}<dt>Sampled</dt><dd>{{ sample.sampled_on|date:"m/d/Y" }}</dd>{% endif %}
+        {% if sample.submitter %}<dt>Submitter</dt><dd>{{ sample.submitter }}</dd>{% endif %}
+        <dt>Origin</dt><dd>{{ sample.origin|default:sample.source|default:"—" }}{% if sample.origin_area %} – {{ sample.origin_area }}{% endif %}{% if sample.gcs_stand %} – {{ sample.gcs_stand }}{% endif %}</dd>
+        {% if sample.unit_id %}<dt>Unit ID</dt><dd>{{ sample.unit_id }}</dd>{% endif %}
+        {% if sample.lot_number %}<dt>Lot #</dt><dd>{{ sample.lot_number }}</dd>{% endif %}
+        <dt>Type</dt><dd>{% if sample.sample_type_other %}{{ sample.sample_type_other }}{% else %}{{ sample.get_sample_type_display }}{% endif %}{% if sample.phase %}, {{ sample.get_phase_display }}{% endif %}</dd>
+        {% if sample.refrigerant_type %}<dt>Refrigerant</dt><dd>{{ sample.refrigerant_type }}</dd>{% endif %}
+        {% if sample.lubricant_type %}<dt>Lubricant</dt><dd>{{ sample.lubricant_type }}</dd>{% endif %}
         {% if sample.blend %}<dt>Blend</dt><dd>{{ sample.blend }}</dd>{% endif %}
-        <dt>LTO #</dt><dd>{{ sample.lto|default:"—" }}</dd>
-        <dt>Source</dt><dd>{{ sample.source|default:"—" }}</dd>
-        <dt>Requested by</dt><dd>{{ sample.requested_by_name|default:"—" }}{% if sample.requested_by_email %}<br><span class="muted">{{ sample.requested_by_email }}</span>{% endif %}</dd>
+        <dt>eLTO</dt><dd>{{ sample.lto|default:"—" }}</dd>
+        <dt>Engineer</dt><dd>{{ sample.requested_by_name|default:"—" }}{% if sample.requested_by_email %}<br><span class="muted">{{ sample.requested_by_email }}</span>{% endif %}</dd>
+        {% if sample.reason %}<dt>Reason</dt><dd>{{ sample.reason|linebreaksbr }}</dd>{% endif %}
         {% if sample.cc_emails %}<dt>CC</dt><dd>{{ sample.cc_emails }}</dd>{% endif %}
         <dt>Logged by</dt><dd>{{ sample.received_by|person }}</dd>
         {% if sample.comments %}<dt>Comments</dt><dd>{{ sample.comments|linebreaksbr }}</dd>{% endif %}

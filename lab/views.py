@@ -72,6 +72,11 @@ def sample_log(request):
             | Q(identification__icontains=query)
             | Q(lto__icontains=query)
             | Q(source__icontains=query)
+            | Q(unit_id__icontains=query)
+            | Q(lot_number__icontains=query)
+            | Q(origin__icontains=query)
+            | Q(origin_area__icontains=query)
+            | Q(refrigerant_type__icontains=query)
             | Q(requested_by_name__icontains=query)
         )
 
@@ -100,7 +105,15 @@ def sample_log(request):
 
 @login_required
 def sample_create(request):
-    form = SampleIntakeForm(request.POST or None)
+    today = timezone.localdate()
+    form = SampleIntakeForm(
+        request.POST or None,
+        initial={
+            "submitter": request.user.get_full_name() or request.user.username,
+            "received_on": today,
+            "sampled_on": today,
+        },
+    )
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             sample = form.save(commit=False)

@@ -188,3 +188,10 @@ dl.info dd { margin: 0; }
 .actions form { margin: 0; }
 
 .pagination { margin-top: 10px; display: flex; gap: 10px; align-items: center; }
+
+/* Intake form */
+.radios .field > div { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.radios .field > div label { font-weight: 400; display: inline-flex; gap: 6px; align-items: center; margin: 0; }
+.radios .field > div input { width: auto; }
+[hidden] { display: none !important; }
+.test-group + .test-group { margin-top: 8px; }

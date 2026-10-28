@@ -7,6 +7,7 @@ from .models import (
     BlendComponent,
     Calibration,
     CalibrationComponent,
+    ChoiceOption,
     Formula,
     Profile,
     Report,
@@ -34,8 +35,8 @@ admin.site.register(User, UserAdmin)
 
 @admin.register(TestMethod)
 class TestMethodAdmin(admin.ModelAdmin):
-    list_display = ["name", "code", "group", "calc_type", "display_order", "on_every_sample", "active"]
-    list_editable = ["code", "display_order", "active"]
+    list_display = ["name", "code", "group", "calc_type", "applies_to", "display_order", "on_every_sample", "active"]
+    list_editable = ["code", "applies_to", "display_order", "active"]
     list_filter = ["group", "calc_type", "active"]
 
 
@@ -116,3 +117,13 @@ class TestResultAdmin(admin.ModelAdmin):
 class ReportAdmin(admin.ModelAdmin):
     list_display = ["report_number", "status", "created_by", "created_at", "sent_at"]
     filter_horizontal = ["samples"]
+
+
+@admin.register(ChoiceOption)
+class ChoiceOptionAdmin(admin.ModelAdmin):
+    """Dropdown choices on the sample submission form."""
+
+    list_display = ["label", "list_name", "short_label", "order", "active"]
+    list_editable = ["short_label", "order", "active"]
+    list_filter = ["list_name", "active"]
+    search_fields = ["label"]

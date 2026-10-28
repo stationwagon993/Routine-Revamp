@@ -1,47 +1,88 @@
 {% extends "lab/base.html" %}
 {% block title %}{% if sample %}Edit {{ sample }}{% else %}New Sample{% endif %}{% endblock %}
 {% block content %}
-<h1>{% if sample %}Edit sample {{ sample.sample_number }}{% else %}Sample intake{% endif %}</h1>
+<h1>{% if sample %}Edit sample {{ sample.sample_number }}{% else %}Sample submission{% endif %}</h1>
 {% if not sample %}<p class="muted">The sample number is assigned automatically from the received date (Julian date + sequence).</p>{% endif %}
-<form method="post">
+<form method="post" id="intake-form" novalidate>
   {% csrf_token %}
+  {% if form.errors %}<div class="banner-warn">Please fix the questions marked in red below.</div>{% endif %}
   {{ form.non_field_errors }}
+
   <div class="panel">
+    <h2>Submission</h2>
+    <div class="form-grid">
+      {% include "lab/_field.html" with field=form.submitter %}
+      {% include "lab/_field.html" with field=form.received_on %}
+      {% include "lab/_field.html" with field=form.sampled_on %}
+      <div>{% include "lab/_field.html" with field=form.origin %}</div>
+      <div data-other-for="origin">{% include "lab/_field.html" with field=form.origin_other %}</div>
+    </div>
+  </div>
+
+  <div class="panel" data-when="tank drum plant7 lab11">
+    <h2>Origin details</h2>
+    <div class="form-grid">
+      <div data-when="tank drum">{% include "lab/_field.html" with field=form.lot_number %}</div>
+      <div data-when="plant7">{% include "lab/_field.html" with field=form.plant7_location %}</div>
+      <div data-other-for="plant7_location">{% include "lab/_field.html" with field=form.plant7_location_other %}</div>
+      <div data-when="lab11">{% include "lab/_field.html" with field=form.lab11_area %}</div>
+      <div data-other-for="lab11_area">{% include "lab/_field.html" with field=form.lab11_area_other %}</div>
+      <div data-when="compressor">{% include "lab/_field.html" with field=form.gcs_stand %}</div>
+      <div data-other-for="gcs_stand">{% include "lab/_field.html" with field=form.gcs_stand_other %}</div>
+    </div>
+  </div>
+
+  <div class="panel" data-when="tank drum system">
     <h2>Sample</h2>
     <div class="form-grid">
-      {% include "lab/_field.html" with field=form.received_on %}
-      {% include "lab/_field.html" with field=form.sample_type %}
-      {% include "lab/_field.html" with field=form.phase %}
-      {% include "lab/_field.html" with field=form.blend %}
-      {% include "lab/_field.html" with field=form.identification wide=True %}
-      {% include "lab/_field.html" with field=form.source %}
-      {% include "lab/_field.html" with field=form.lto %}
+      <div data-when="system">{% include "lab/_field.html" with field=form.unit_id %}</div>
+      <div data-when="plant7">{% include "lab/_field.html" with field=form.plant7_refrigerant %}</div>
+      <div data-other-for="plant7_refrigerant">{% include "lab/_field.html" with field=form.plant7_refrigerant_other %}</div>
+      <div data-when="general-refrigerant">{% include "lab/_field.html" with field=form.refrigerant %}</div>
+      <div data-other-for="refrigerant">{% include "lab/_field.html" with field=form.refrigerant_other %}</div>
+      <div data-when="drum system">{% include "lab/_field.html" with field=form.lubricant %}</div>
+      <div data-other-for="lubricant">{% include "lab/_field.html" with field=form.lubricant_other %}</div>
+      <div data-when="system" class="radios">{% include "lab/_field.html" with field=form.sample_type %}</div>
+      <div data-when="type-other">{% include "lab/_field.html" with field=form.sample_type_other %}</div>
+      <div data-when="refrigerant-sample" class="radios">{% include "lab/_field.html" with field=form.phase %}</div>
     </div>
   </div>
-  <div class="panel">
-    <h2>Requester</h2>
+
+  <div class="panel" data-when="tank drum system">
+    <h2>Request</h2>
     <div class="form-grid">
       {% include "lab/_field.html" with field=form.requested_by_name %}
+      {% include "lab/_field.html" with field=form.lto %}
       {% include "lab/_field.html" with field=form.requested_by_email %}
       {% include "lab/_field.html" with field=form.cc_emails %}
+      {% include "lab/_field.html" with field=form.reason wide=True %}
       {% include "lab/_field.html" with field=form.comments wide=True %}
+      {% include "lab/_field.html" with field=form.identification wide=True %}
     </div>
   </div>
+
   {% if test_groups %}
-  <div class="panel">
-    <h2>Tests requested</h2>
+  <div class="panel" data-when="tank drum system">
+    <h2>Testing requested</h2>
     {{ form.tests.errors }}
+    <p class="muted" id="tests-hint">Answer the sample type questions above to see the tests that can be requested.</p>
     {% for group, methods in test_groups %}
-    <h3>{{ group }}</h3>
-    <div class="checks">
-      {% for m in methods %}
-      <label><input type="checkbox" name="tests" value="{{ m.pk }}" {% if m.pk|stringformat:"s" in selected %}checked{% endif %}> {{ m.name }}{% if m.code %} <span class="muted">({{ m.code }})</span>{% endif %}</label>
-      {% endfor %}
+    <div class="test-group">
+      <h3>{{ group }}</h3>
+      <div class="checks">
+        {% for m in methods %}
+        <label data-applies="{{ m.applies_to }}"><input type="checkbox" name="tests" value="{{ m.pk }}" {% if m.calc_type == "blend" %}data-blend{% endif %} {% if m.pk|stringformat:"s" in selected %}checked{% endif %}> {{ m.name }}{% if m.code %} <span class="muted">({{ m.code }})</span>{% endif %}</label>
+        {% endfor %}
+      </div>
     </div>
     {% endfor %}
+    <div data-when="blend-requested" style="max-width: 320px; margin-top: 10px;">{% include "lab/_field.html" with field=form.blend %}</div>
     <p class="muted">“Results Reported” is added to every sample automatically.</p>
   </div>
+  {% else %}
+  <div class="panel" data-when="tank drum system" style="max-width: 360px;">{% include "lab/_field.html" with field=form.blend %}</div>
   {% endif %}
+
   <div class="actions">
     <button type="submit">{% if sample %}Save{% else %}Log sample{% endif %}</button>
     {% if not sample %}<button type="submit" name="add_another" class="secondary">Log and add another</button>{% endif %}

@@ -81,12 +81,26 @@ class TestMethod(models.Model):
     on_every_sample = models.BooleanField(
         default=False, help_text="Added automatically to every new sample (e.g. Results Reported)."
     )
+    applies_to = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text=(
+            "Sample kinds this test is offered for, comma separated: liquid, vapor, expanded, oil. "
+            "Blank = offered for every sample."
+        ),
+    )
 
     class Meta:
         ordering = ["display_order", "name"]
 
     def __str__(self):
         return f"{self.name} ({self.code})" if self.code else self.name
+
+    def applies(self, kind):
+        """Whether the intake form offers this test for a sample kind (see Sample.kind)."""
+        if not self.applies_to or kind == Sample.TYPE_OTHER:
+            return True
+        return kind in {k.strip() for k in self.applies_to.split(",")}
 
     @property
     def has_results(self):
@@ -314,6 +328,56 @@ class VerificationComponent(models.Model):
         return abs(self.difference) <= settings.VERIFICATION_TOLERANCE + 1e-9
 
 
+# --- Intake form dropdowns ---------------------------------------------------
+
+
+class ChoiceOption(models.Model):
+    """One entry in an intake-form dropdown. "Other" is always offered as well."""
+
+    REFRIGERANT = "refrigerant"
+    LUBRICANT = "lubricant"
+    PLANT7_LOCATION = "plant7_location"
+    PLANT7_REFRIGERANT = "plant7_refrigerant"
+    LAB11_CATEGORY = "lab11_category"
+    GCS_STAND = "gcs_stand"
+    LIST_CHOICES = [
+        (REFRIGERANT, "Refrigerant types"),
+        (LUBRICANT, "Lubricant types"),
+        (PLANT7_LOCATION, "Plant 7 locations"),
+        (PLANT7_REFRIGERANT, "Plant 7 refrigerant types"),
+        (LAB11_CATEGORY, "Lab 11 areas"),
+        (GCS_STAND, "Compressor test stands (GCS)"),
+    ]
+
+    list_name = models.CharField("list", max_length=30, choices=LIST_CHOICES)
+    label = models.CharField(max_length=100)
+    short_label = models.CharField(
+        max_length=100, blank=True, help_text="Used in the sample identification instead of the label."
+    )
+    order = models.PositiveIntegerField(default=0)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["list_name", "order", "label"]
+        constraints = [
+            models.UniqueConstraint(fields=["list_name", "label"], name="unique_choice_option")
+        ]
+
+    def __str__(self):
+        return self.label
+
+    @classmethod
+    def labels(cls, list_name):
+        return list(
+            cls.objects.filter(list_name=list_name, active=True).values_list("label", flat=True)
+        )
+
+    @classmethod
+    def short(cls, list_name, label):
+        option = cls.objects.filter(list_name=list_name, label=label).first()
+        return (option.short_label or option.label) if option else label
+
+
 # --- Samples ----------------------------------------------------------------
 
 
@@ -328,17 +392,42 @@ class Sample(models.Model):
     ]
     PHASE_CHOICES = [
         ("", "—"),
-        ("vapor", "Vapor"),
         ("liquid", "Liquid"),
+        ("vapor", "Vapor"),
+        ("expanded", "Expanded Liquid"),
     ]
+
+    ORIGIN_PLANT4 = "Plant 4"
+    ORIGIN_PLANT7 = "Plant 7"
+    ORIGIN_LAB11 = "Lab 11"
+    ORIGIN_NEW_TANK = "New Refrigerant Tank"
+    ORIGIN_NEW_DRUM = "New Lubricant Drum"
+    ORIGINS = [ORIGIN_PLANT4, ORIGIN_PLANT7, ORIGIN_LAB11, ORIGIN_NEW_TANK, ORIGIN_NEW_DRUM]
+    # Lab 11 area that is asked for its compressor test stand.
+    COMPRESSOR_GROUP = "Compressor Group"
 
     sample_number = models.CharField(max_length=20, unique=True, editable=False)
     julian = models.CharField(max_length=5, editable=False)
     sequence = models.PositiveIntegerField(editable=False)
     received_on = models.DateField(default=timezone.localdate)
     identification = models.CharField(
-        max_length=200, help_text="e.g. Compressors, GCS 4, Refrigerant, Liquid"
+        max_length=200,
+        blank=True,
+        help_text="Leave blank to build it from the answers, e.g. Compressors, GCS 4, Refrigerant, Liquid.",
     )
+    submitter = models.CharField(max_length=100, blank=True)
+    origin = models.CharField("where the sample originates", max_length=100, blank=True)
+    origin_area = models.CharField(
+        "area", max_length=100, blank=True, help_text="Plant 7 location or Lab 11 area."
+    )
+    gcs_stand = models.CharField("compressor test stand", max_length=50, blank=True)
+    unit_id = models.CharField("unit ID", max_length=100, blank=True)
+    lot_number = models.CharField("lot #", max_length=50, blank=True)
+    refrigerant_type = models.CharField(max_length=50, blank=True)
+    lubricant_type = models.CharField(max_length=50, blank=True)
+    sample_type_other = models.CharField("other sample type", max_length=100, blank=True)
+    reason = models.TextField("reason for testing", blank=True)
+    sampled_on = models.DateField("sampled date", null=True, blank=True)
     lto = models.CharField("LTO #", max_length=30, blank=True)
     sample_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
     phase = models.CharField(max_length=10, choices=PHASE_CHOICES, blank=True)
@@ -364,7 +453,35 @@ class Sample(models.Model):
     def get_absolute_url(self):
         return reverse("lab:sample_detail", args=[self.pk])
 
+    @property
+    def kind(self):
+        """liquid / vapor / expanded / oil / other: decides which tests can be requested."""
+        if self.sample_type == self.TYPE_REFRIGERANT:
+            return self.phase
+        return self.sample_type
+
+    def build_identification(self):
+        """Sample log text in the lab's usual style, built from the intake answers."""
+        type_label = self.sample_type_other or self.get_sample_type_display()
+        if self.origin == self.ORIGIN_NEW_TANK:
+            parts = [self.origin, f"Lot {self.lot_number}", self.refrigerant_type, self.get_phase_display()]
+        elif self.origin == self.ORIGIN_NEW_DRUM:
+            parts = [self.origin, f"Lot {self.lot_number}", self.lubricant_type, "Oil"]
+        else:
+            if self.origin == self.ORIGIN_LAB11:
+                parts = [ChoiceOption.short(ChoiceOption.LAB11_CATEGORY, self.origin_area)]
+            elif self.origin == self.ORIGIN_PLANT7:
+                parts = [self.origin, ChoiceOption.short(ChoiceOption.PLANT7_LOCATION, self.origin_area)]
+            else:
+                parts = [self.origin]
+            parts += [self.gcs_stand, self.unit_id, type_label]
+            if self.sample_type == self.TYPE_REFRIGERANT:
+                parts.append(self.get_phase_display())
+        return ", ".join(p for p in parts if p and p != "—")
+
     def save(self, *args, **kwargs):
+        if not self.identification:
+            self.identification = self.build_identification()[:200]
         if not self.sample_number:
             with transaction.atomic():
                 self.julian = julian_code(self.received_on)

@@ -251,38 +251,92 @@ class ViewTests(LabTestCase):
         response = self.client.get(reverse("lab:sample_log"))
         self.assertEqual(response.status_code, 302)
 
-    def test_intake_creates_sample_with_tests(self):
+    def intake(self, **answers):
+        data = {
+            "submitter": "Carson Steichen",
+            "received_on": "2026-07-07",
+            "sampled_on": "2026-07-06",
+            "requested_by_name": "Jordan Lee",
+            "lto": "108836",
+            "reason": "Routine check",
+            "refrigerant": "R-410A",
+            "lubricant": "Solest 120",
+        }
+        data.update(answers)
+        return self.client.post(reverse("lab:sample_create"), data)
+
+    def test_compressor_sample(self):
         moisture = TestMethod.objects.get(name="Moisture")
-        response = self.client.post(
-            reverse("lab:sample_create"),
-            {
-                "received_on": "2026-07-07",
-                "sample_type": "refrigerant",
-                "phase": "liquid",
-                "blend": self.blend.pk,
-                "identification": "Water Cooled, 7457, Refrigerant, Liquid",
-                "lto": "108782",
-                "tests": [moisture.pk],
-            },
+        blend = TestMethod.objects.get(name="Blend Analysis")
+        response = self.intake(
+            origin="Lab 11", lab11_area="Compressor Group", gcs_stand="GCS 4",
+            sample_type="refrigerant", phase="liquid", tests=[moisture.pk, blend.pk],
         )
         sample = Sample.objects.get()
         self.assertRedirects(response, sample.get_absolute_url())
+        self.assertEqual(sample.identification, "Compressors, GCS 4, Refrigerant, Liquid")
+        self.assertEqual(sample.blend, self.blend)  # matched from the refrigerant type
+        self.assertEqual(sample.origin_area, "Compressor Group")
         names = set(sample.tests.values_list("test_method__name", flat=True))
-        self.assertEqual(names, {"Moisture", "Results Reported"})
+        self.assertEqual(names, {"Moisture", "Blend Analysis", "Results Reported"})
 
-    def test_blend_analysis_requires_blend_on_intake(self):
-        blend_method = TestMethod.objects.get(name="Blend Analysis")
-        response = self.client.post(
-            reverse("lab:sample_create"),
-            {
-                "received_on": "2026-07-07",
-                "sample_type": "refrigerant",
-                "identification": "x",
-                "tests": [blend_method.pk],
-            },
+    def test_unit_sample_with_other_answers(self):
+        tan = TestMethod.objects.get(name="TAN")
+        self.intake(
+            origin="Lab 11", lab11_area="Water Cooled Chiller", unit_id="7457",
+            refrigerant="__other__", refrigerant_other="R-1336mzz(Z)",
+            sample_type="oil", tests=[tan.pk],
         )
-        self.assertEqual(response.status_code, 200)
+        sample = Sample.objects.get()
+        self.assertEqual(sample.identification, "Water Cooled, 7457, Oil")
+        self.assertEqual(sample.refrigerant_type, "R-1336mzz(Z)")
+        self.assertEqual(sample.phase, "")
+
+    def test_new_tank_and_drum(self):
+        blend = TestMethod.objects.get(name="Blend Analysis")
+        tan = TestMethod.objects.get(name="TAN")
+        self.intake(origin="New Refrigerant Tank", lot_number="8", phase="expanded", tests=[blend.pk])
+        self.intake(origin="New Lubricant Drum", lot_number="22", tests=[tan.pk])
+        tank, drum = Sample.objects.order_by("sequence")
+        self.assertEqual(tank.identification, "New Refrigerant Tank, Lot 8, R-410A, Expanded Liquid")
+        self.assertEqual(tank.sample_type, Sample.TYPE_REFRIGERANT)
+        self.assertEqual(drum.identification, "New Lubricant Drum, Lot 22, Solest 120, Oil")
+        self.assertEqual(drum.sample_type, Sample.TYPE_OIL)
+        self.assertEqual(drum.refrigerant_type, "")
+
+    def test_branch_questions_are_required(self):
+        moisture = TestMethod.objects.get(name="Moisture")
+        response = self.intake(origin="Lab 11", lab11_area="Compressor Group", sample_type="refrigerant", tests=[moisture.pk])
         self.assertFalse(Sample.objects.exists())
+        errors = response.context["form"].errors
+        self.assertIn("gcs_stand", errors)
+        self.assertIn("phase", errors)
+        response = self.intake(origin="Plant 7", plant7_location="__other__", sample_type="refrigerant", phase="liquid", tests=[moisture.pk])
+        errors = response.context["form"].errors
+        self.assertIn("plant7_location_other", errors)
+        self.assertIn("plant7_refrigerant", errors)
+        self.assertIn("unit_id", errors)
+
+    def test_tests_must_fit_sample_type(self):
+        non_cond = TestMethod.objects.get(name="Non-Condensables")
+        response = self.intake(origin="Plant 4", unit_id="U1", sample_type="refrigerant", phase="liquid", tests=[non_cond.pk])
+        self.assertIn("tests", response.context["form"].errors)
+        self.assertFalse(Sample.objects.exists())
+
+    def test_blend_analysis_needs_a_known_blend(self):
+        blend = TestMethod.objects.get(name="Blend Analysis")
+        response = self.intake(origin="Plant 4", unit_id="U1", refrigerant="R-22", sample_type="refrigerant", phase="liquid", tests=[blend.pk])
+        self.assertIn("blend", response.context["form"].errors)
+        self.assertFalse(Sample.objects.exists())
+
+    def test_edit_keeps_answers(self):
+        tan = TestMethod.objects.get(name="TAN")
+        self.intake(origin="Plant 7", plant7_location="Bay B North", plant7_refrigerant="R-514A", unit_id="U9", sample_type="oil", tests=[tan.pk])
+        sample = Sample.objects.get()
+        page = self.client.get(reverse("lab:sample_edit", args=[sample.pk]))
+        form = page.context["form"]
+        self.assertEqual(form["plant7_location"].value(), "Bay B North")
+        self.assertEqual(form["plant7_refrigerant"].value(), "R-514A")
 
     def test_pages_render(self):
         cal, _, _ = self.make_calibration()
