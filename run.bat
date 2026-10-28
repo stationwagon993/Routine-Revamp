@@ -16,7 +16,7 @@ if not exist config.ini (
 
 if not exist .venv (
     echo First run: setting up. This takes a minute or two...
-    py -3 -m venv .venv || goto :error
+    py -m venv .venv || goto :error
     .venv\Scripts\python -m pip install --quiet --upgrade pip
 )
 .venv\Scripts\python -m pip install --quiet -r requirements.txt || goto :error
