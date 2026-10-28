@@ -32,7 +32,8 @@ if errorlevel 1 (
 echo.
 echo Routine Revamp is running at http://127.0.0.1:8000/
 echo Keep this window open while you use it. Close it to stop the app.
-start "" http://127.0.0.1:8000/
+rem Open the browser once the server has had a few seconds to start.
+start "" /min cmd /c "timeout /t 5 /nobreak >nul & start http://127.0.0.1:8000/"
 .venv\Scripts\python manage.py runserver 127.0.0.1:8000 --insecure --noreload
 goto :eof
 
