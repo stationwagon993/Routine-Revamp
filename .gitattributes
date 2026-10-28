@@ -1,1 +1,2 @@
-*.bat text eol=crlf
+# Stored with Windows line endings as-is, so ZIP downloads work too.
+*.bat -text
