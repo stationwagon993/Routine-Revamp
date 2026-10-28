@@ -1,0 +1,20 @@
+{% extends "lab/base.html" %}
+{% block title %}{{ method.name }} formula{% endblock %}
+{% block content %}
+<h1>{{ method.name }} formula{% if current %} – new version (current is v{{ current.version }}){% endif %}</h1>
+<form method="post" class="panel">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  {% include "lab/_field.html" with field=form.inputs_text %}
+  {% include "lab/_field.html" with field=form.expression %}
+  <div class="form-grid">
+    {% include "lab/_field.html" with field=form.result_unit %}
+    {% include "lab/_field.html" with field=form.decimals %}
+  </div>
+  {% include "lab/_field.html" with field=form.notes %}
+  <div class="actions">
+    <button type="submit">Save new version</button>
+    <a href="{% url 'lab:formula_list' %}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

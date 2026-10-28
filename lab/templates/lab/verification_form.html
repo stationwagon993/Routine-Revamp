@@ -1,0 +1,36 @@
+{% extends "lab/base.html" %}
+{% load lab_extras %}
+{% block title %}Verify {{ calibration }}{% endblock %}
+{% block content %}
+<h1>Verify {{ calibration.blend }} calibration ({{ calibration.performed_on|date:"m/d/Y" }})</h1>
+<form method="post">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  <div class="panel">
+    <div class="form-grid">
+      {% include "lab/_field.html" with field=form.standard_cylinder %}
+      {% include "lab/_field.html" with field=form.performed_on %}
+      {% include "lab/_field.html" with field=form.notes wide=True %}
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Verification run</h2>
+    <p class="muted">Each component passes if its calculated % (peak area × response factor) is within the tolerance of the theoretical %.</p>
+    <table class="data">
+      <tr><th>Component</th><th>Response factor</th><th>Theoretical %</th><th>Peak area</th></tr>
+      {% for cc, theoretical, area in form.component_rows %}
+      <tr>
+        <td>{{ cc.component.name }}</td>
+        <td class="num mono">{{ cc.response_factor|num:8 }}</td>
+        <td>{{ theoretical }}{{ theoretical.errors }}</td>
+        <td>{{ area }}{{ area.errors }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div class="actions">
+    <button type="submit">Save verification</button>
+    <a href="{{ calibration.get_absolute_url }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

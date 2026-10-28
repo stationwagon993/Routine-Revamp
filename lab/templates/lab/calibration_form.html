@@ -1,0 +1,33 @@
+{% extends "lab/base.html" %}
+{% block title %}Calibrate {{ blend }}{% endblock %}
+{% block content %}
+<h1>Calibrate {{ blend }}</h1>
+<form method="post">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  <div class="panel">
+    <div class="form-grid">
+      {% include "lab/_field.html" with field=form.standard_cylinder %}
+      {% include "lab/_field.html" with field=form.performed_on %}
+      {% include "lab/_field.html" with field=form.notes wide=True %}
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Peak areas</h2>
+    <p class="muted">Enter the standard's composition and the peak area from each of the three GC runs. The response factor for each component is its standard % ÷ mean peak area.</p>
+    <table class="data">
+      <tr><th>Component</th><th>Standard %</th><th>Run 1 area</th><th>Run 2 area</th><th>Run 3 area</th></tr>
+      {% for component, fields in form.component_rows %}
+      <tr>
+        <td>{{ component.name }}</td>
+        {% for f in fields %}<td>{{ f }}{{ f.errors }}</td>{% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div class="actions">
+    <button type="submit">Save calibration</button>
+    <a href="{% url 'lab:calibration_list' %}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends "lab/base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<div class="panel" style="max-width: 380px; margin: 60px auto;">
+  <h1>{{ LAB_NAME }}</h1>
+  <p class="muted">Routine Revamp – log in to continue.</p>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    {% include "lab/_field.html" with field=form.username %}
+    {% include "lab/_field.html" with field=form.password %}
+    <p><button type="submit">Log in</button></p>
+  </form>
+</div>
+{% endblock %}

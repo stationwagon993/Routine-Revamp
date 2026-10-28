@@ -1,0 +1,84 @@
+{% extends "lab/base.html" %}
+{% load lab_extras %}
+{% block title %}Report {{ report.report_number }}{% endblock %}
+{% block content %}
+<div class="actions" style="margin-bottom: 8px;"><a href="{% url 'lab:report_list' %}">← Reports</a></div>
+<h1>Report {{ report.report_number }} <span class="pill {{ report.status }}">{{ report.get_status_display }}</span></h1>
+
+{% if placeholder %}<div class="banner-warn">Some results use <strong>placeholder formulas</strong>. The PDF will be marked as a draft until the real formulas are entered.</div>{% endif %}
+{% if open_tests %}
+<div class="banner-warn">Tests still in process:
+  {% for t in open_tests %}<a href="{{ t.sample.get_absolute_url }}#test-{{ t.pk }}">{{ t.sample.sample_number }} {{ t.test_method.name }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}
+</div>
+{% endif %}
+
+<div class="row">
+  <div class="grow" style="flex: 2;">
+    {% for sample in samples %}
+    <div class="panel">
+      <h2><a href="{{ sample.get_absolute_url }}">{{ sample.sample_number }}</a> – {{ sample.identification }}</h2>
+      <p class="muted" style="margin-top: 0;">LTO {{ sample.lto|default:"—" }} · received {{ sample.received_on|date:"m/d/Y" }}</p>
+      <table class="data">
+        <tr><th>Test</th><th>Method</th><th>Result</th><th>Analyst</th></tr>
+        {% for test in sample.tests.all %}{% if test.test_method.has_results and test.status != "cancelled" %}
+          {% for r in test.results.all %}
+          <tr>
+            <td>{{ test.test_method.name }}{% if r.label %} – {{ r.label }}{% endif %}</td>
+            <td>{{ test.test_method.code }}</td>
+            <td class="num">{{ r.display_value }} {{ r.unit }}</td>
+            <td>{{ test.cell_text }}</td>
+          </tr>
+          {% empty %}
+          <tr><td>{{ test.test_method.name }}</td><td>{{ test.test_method.code }}</td><td class="muted" colspan="2">{{ test.get_status_display }}</td></tr>
+          {% endfor %}
+        {% endif %}{% endfor %}
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="grow" style="max-width: 420px;">
+    <div class="panel">
+      <h2>1. Email details</h2>
+      <form method="post">
+        {% csrf_token %}
+        {% include "lab/_field.html" with field=form.recipient_email %}
+        {% include "lab/_field.html" with field=form.cc_emails %}
+        {% include "lab/_field.html" with field=form.notes %}
+        <p><button type="submit" class="secondary">Save</button></p>
+      </form>
+    </div>
+    <div class="panel">
+      <h2>2. Generate PDF</h2>
+      <form method="post" action="{% url 'lab:report_generate' report.pk %}">
+        {% csrf_token %}
+        <button type="submit">{% if pdf_exists %}Regenerate PDF{% else %}Generate PDF{% endif %}</button>
+      </form>
+      {% if pdf_exists %}
+      <p><a href="{% url 'lab:report_pdf' report.pk %}" target="_blank">Open PDF</a><br>
+      <span class="muted" style="font-size: 12px; word-break: break-all;">Saved to {{ report.pdf_path }}</span></p>
+      {% endif %}
+    </div>
+    <div class="panel">
+      <h2>3. Email</h2>
+      <form method="post" action="{% url 'lab:report_email' report.pk %}">
+        {% csrf_token %}
+        <button type="submit" {% if not pdf_exists %}disabled{% endif %}>Create Outlook draft</button>
+      </form>
+      <p class="muted" style="font-size: 12px;">Opens a pre-filled email with the PDF attached. Check it and click Send in Outlook.</p>
+    </div>
+    <div class="panel">
+      <h2>4. Mark as sent</h2>
+      {% if report.status == "sent" %}
+      <p>Sent by {{ report.sent_by|person }} on {{ report.sent_at|date:"m/d/Y H:i" }}.</p>
+      {% else %}
+      <form method="post" action="{% url 'lab:report_mark_sent' report.pk %}">
+        {% csrf_token %}
+        <button type="submit" {% if not pdf_exists %}disabled{% endif %}>I've sent the email</button>
+      </form>
+      <p class="muted" style="font-size: 12px;">Marks “Results Reported” complete in the sample log.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

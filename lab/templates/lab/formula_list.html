@@ -1,0 +1,28 @@
+{% extends "lab/base.html" %}
+{% block title %}Formulas{% endblock %}
+{% block content %}
+<h1>Formulas</h1>
+<p class="muted">Formulas are versioned. Saving a change creates a new version, and results already entered keep the version they were calculated with.</p>
+{% for method in methods %}
+{% with current=method.current_formula %}
+<div class="panel">
+  <div class="actions" style="justify-content: space-between;">
+    <h2>{{ method.name }}{% if method.code %} <span class="muted" style="font-weight: 400;">({{ method.code }})</span>{% endif %}</h2>
+    <a class="btn small" href="{% url 'lab:formula_new_version' method.pk %}">{% if current %}Edit (new version){% else %}Add formula{% endif %}</a>
+  </div>
+  {% if current %}
+  <p class="mono">= {{ current.expression }}{% if current.result_unit %} &nbsp;[{{ current.result_unit }}]{% endif %}</p>
+  <p class="muted" style="margin-bottom: 0;">
+    Version {{ current.version }} · inputs:
+    {% for i in current.inputs %}{{ i.label }} (<code>{{ i.name }}</code>{% if i.unit %}, {{ i.unit }}{% endif %}){% if not forloop.last %}, {% endif %}{% endfor %}
+    {% if current.is_placeholder %}<span class="pill unverified">Placeholder – replace with the lab's formula</span>{% endif %}
+  </p>
+  {% else %}
+  <p class="muted">No formula yet.</p>
+  {% endif %}
+</div>
+{% endwith %}
+{% empty %}
+<p class="muted">No calculated tests. Set a test's result type to “Calculated from a formula” in Admin → Test methods.</p>
+{% endfor %}
+{% endblock %}

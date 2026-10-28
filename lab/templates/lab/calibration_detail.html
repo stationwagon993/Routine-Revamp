@@ -1,0 +1,69 @@
+{% extends "lab/base.html" %}
+{% load lab_extras %}
+{% block title %}{{ calibration }}{% endblock %}
+{% block content %}
+<div class="actions" style="margin-bottom: 8px;"><a href="{% url 'lab:calibration_list' %}">← Calibrations</a></div>
+<h1>{{ calibration.blend }} calibration – {{ calibration.performed_on|date:"m/d/Y" }} <span class="pill {{ calibration.status }}">{{ calibration.status|capfirst }}</span></h1>
+
+{% if calibration.status == "unverified" %}<div class="banner-warn">This calibration can't be used for results until a verification passes. <a href="{% url 'lab:verification_create' calibration.pk %}">Run verification</a></div>{% endif %}
+{% if calibration.status == "failed" %}<div class="banner-warn">The latest verification failed. Run another verification or recalibrate.</div>{% endif %}
+
+<div class="panel">
+  <dl class="info">
+    <dt>Calibrated by</dt><dd>{{ calibration.performed_by|person }}</dd>
+    <dt>Standard cylinder</dt><dd>{{ calibration.standard_cylinder }}</dd>
+    <dt>Expires</dt><dd>{{ calibration.expires_on|date:"m/d/Y" }}</dd>
+    {% if calibration.notes %}<dt>Notes</dt><dd>{{ calibration.notes|linebreaksbr }}</dd>{% endif %}
+  </dl>
+</div>
+
+<div class="panel">
+  <h2>Calibration runs</h2>
+  <table class="data">
+    <tr><th>Component</th><th>Standard %</th><th>Run 1</th><th>Run 2</th><th>Run 3</th><th>Mean area</th><th>Response factor</th></tr>
+    {% for c in components %}
+    <tr>
+      <td>{{ c.component.name }}</td>
+      <td class="num">{{ c.standard_percent|num:4 }}</td>
+      <td class="num">{{ c.area_run1|num:2 }}</td>
+      <td class="num">{{ c.area_run2|num:2 }}</td>
+      <td class="num">{{ c.area_run3|num:2 }}</td>
+      <td class="num">{{ c.mean_area|num:2 }}</td>
+      <td class="num mono">{{ c.response_factor|num:8 }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="panel">
+  <div class="actions" style="justify-content: space-between;">
+    <h2>Verifications</h2>
+    {% if not calibration.is_expired %}<a class="btn small" href="{% url 'lab:verification_create' calibration.pk %}">+ Run verification</a>{% endif %}
+  </div>
+  {% for v in verifications %}
+  <h3>{{ v.performed_on|date:"m/d/Y" }} by {{ v.performed_by|person }} {% if v.passed %}<span class="pill pass">Pass</span>{% else %}<span class="pill fail">Fail</span>{% endif %}</h3>
+  <table class="data" style="margin-bottom: 12px;">
+    <tr><th>Component</th><th>Theoretical %</th><th>Peak area</th><th>Calculated %</th><th>Difference</th><th></th></tr>
+    {% for vc in v.components.all %}
+    <tr>
+      <td>{{ vc.calibration_component.component.name }}</td>
+      <td class="num">{{ vc.theoretical_percent|num:4 }}</td>
+      <td class="num">{{ vc.peak_area|num:2 }}</td>
+      <td class="num">{{ vc.calculated_percent|num:4 }}</td>
+      <td class="num">{{ vc.difference|signed:4 }}</td>
+      <td>{% if vc.passed %}<span class="pill pass">Pass</span>{% else %}<span class="pill fail">Fail</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% empty %}
+  <p class="muted">No verifications yet.</p>
+  {% endfor %}
+</div>
+
+{% if samples %}
+<div class="panel">
+  <h2>Samples reported with this calibration</h2>
+  <p>{% for s in samples %}<a href="{{ s.get_absolute_url }}">{{ s.sample_number }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</p>
+</div>
+{% endif %}
+{% endblock %}

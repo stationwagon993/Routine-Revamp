@@ -1,0 +1,78 @@
+{% extends "lab/base.html" %}
+{% block title %}Sample Log{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+{% for cal in expiring %}
+<div class="banner-warn">
+  The {{ cal.blend }} calibration expires on {{ cal.expires_on|date:"m/d/Y" }}.
+  <a href="{% url 'lab:calibration_create' %}?blend={{ cal.blend_id }}">Calibrate now</a>
+</div>
+{% endfor %}
+
+<div class="log-tools">
+  <h1 style="margin: 0 12px 0 0;">Sample Log</h1>
+  <form method="get" class="actions">
+    <input type="text" name="q" value="{{ query }}" placeholder="Search sample #, ID, LTO, source…" size="32">
+    <select name="show" onchange="this.form.submit()">
+      <option value="all" {% if show == "all" %}selected{% endif %}>All samples</option>
+      <option value="open" {% if show == "open" %}selected{% endif %}>In process only</option>
+    </select>
+    <button type="submit" class="secondary">Search</button>
+  </form>
+  <span class="spacer" style="flex:1"></span>
+  <a class="btn" href="{% url 'lab:sample_create' %}">+ New sample</a>
+</div>
+
+<div class="legend">
+  <span><span class="swatch" style="background: var(--requested)">-</span> Analysis requested</span>
+  <span><span class="swatch" style="background: var(--completed); color: #fff">CS</span> Testing completed (initials)</span>
+  <span><span class="swatch" style="background: var(--compiling)"></span> Test run, data needs compiling</span>
+  <span><span class="swatch" style="background: var(--cancelled)"></span> Testing cancelled</span>
+  <span><span class="swatch" style="background: var(--oldest); width: auto; padding: 0 4px; color: #fff">{{ oldest.sample_number|default:"—" }}</span> Oldest in process</span>
+  <span><span class="swatch" style="width: auto; padding: 0 4px">{{ TODAY_JULIAN }}</span> Julian date</span>
+</div>
+
+<div class="log-wrap">
+<table class="log">
+  <thead>
+    <tr class="groups">
+      <th class="sticky" colspan="1"></th>
+      <th colspan="3"></th>
+      {% for group, methods in groups %}<th colspan="{{ methods|length }}">{% if group != "General" %}{{ group }}{% endif %}</th>{% endfor %}
+    </tr>
+    <tr class="cols">
+      <th class="sticky">Sample #</th>
+      <th>Sample Identification</th>
+      <th>LTO</th>
+      <th>Comments</th>
+      {% for group, methods in groups %}{% for m in methods %}
+      <th class="vertical" title="{{ m.name }}"><div>{{ m.name }}{% if m.code %} <small>({{ m.code }})</small>{% endif %}</div></th>
+      {% endfor %}{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for sample, cells in rows %}
+    <tr data-href="{{ sample.get_absolute_url }}">
+      <td class="sticky sample-no{% if sample.pk == oldest.pk %} oldest{% endif %}"><a href="{{ sample.get_absolute_url }}">{{ sample.sample_number }}</a></td>
+      <td class="ident" title="{{ sample.identification }}">{{ sample.identification }}</td>
+      <td>{{ sample.lto }}</td>
+      <td class="ident" title="{{ sample.comments }}">{{ sample.comments|truncatechars:40 }}</td>
+      {% for test in cells %}
+      <td class="cell{% if test %} st-{{ test.status }}{% endif %}" {% if test %}title="{{ test.get_status_display }}"{% endif %}>{% if test %}{{ test.cell_text }}{% endif %}</td>
+      {% endfor %}
+    </tr>
+    {% empty %}
+    <tr><td colspan="99" class="muted" style="padding: 16px;">No samples yet. <a href="{% url 'lab:sample_create' %}">Log the first sample.</a></td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if page.has_other_pages %}
+<div class="pagination">
+  {% if page.has_previous %}<a href="?page={{ page.previous_page_number }}&q={{ query|urlencode }}&show={{ show }}">← Newer</a>{% endif %}
+  <span class="muted">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}<a href="?page={{ page.next_page_number }}&q={{ query|urlencode }}&show={{ show }}">Older →</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

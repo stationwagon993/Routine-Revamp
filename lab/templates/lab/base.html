@@ -1,0 +1,36 @@
+{% load static lab_extras %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Routine Revamp{% endblock %} · {{ LAB_NAME }}</title>
+  <link rel="stylesheet" href="{% static 'lab/style.css' %}">
+</head>
+<body>
+  {% if user.is_authenticated %}
+  {% with url=request.resolver_match.url_name %}
+  <nav class="topbar">
+    <span class="brand">Routine Revamp</span>
+    <a href="{% url 'lab:sample_log' %}" class="{% if url == 'sample_log' %}active{% endif %}">Sample Log</a>
+    <a href="{% url 'lab:sample_create' %}" class="{% if url == 'sample_create' %}active{% endif %}">New Sample</a>
+    <a href="{% url 'lab:report_list' %}" class="{% if 'report' in url %}active{% endif %}">Reports</a>
+    <a href="{% url 'lab:calibration_list' %}" class="{% if 'calibration' in url or 'verification' in url %}active{% endif %}">Calibrations</a>
+    <a href="{% url 'lab:formula_list' %}" class="{% if 'formula' in url %}active{% endif %}">Formulas</a>
+    {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin</a>{% endif %}
+    <span class="spacer"></span>
+    <span class="user">{{ user|person }}</span>
+    <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="link">Log out</button></form>
+  </nav>
+  {% endwith %}
+  {% endif %}
+  <main class="{% block main_class %}{% endblock %}">
+    {% if messages %}
+    <ul class="messages">
+      {% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <script src="{% static 'lab/app.js' %}"></script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+{% extends "lab/base.html" %}
+{% block title %}{% if sample %}Edit {{ sample }}{% else %}New Sample{% endif %}{% endblock %}
+{% block content %}
+<h1>{% if sample %}Edit sample {{ sample.sample_number }}{% else %}Sample intake{% endif %}</h1>
+{% if not sample %}<p class="muted">The sample number is assigned automatically from the received date (Julian date + sequence).</p>{% endif %}
+<form method="post">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  <div class="panel">
+    <h2>Sample</h2>
+    <div class="form-grid">
+      {% include "lab/_field.html" with field=form.received_on %}
+      {% include "lab/_field.html" with field=form.sample_type %}
+      {% include "lab/_field.html" with field=form.phase %}
+      {% include "lab/_field.html" with field=form.blend %}
+      {% include "lab/_field.html" with field=form.identification wide=True %}
+      {% include "lab/_field.html" with field=form.source %}
+      {% include "lab/_field.html" with field=form.lto %}
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Requester</h2>
+    <div class="form-grid">
+      {% include "lab/_field.html" with field=form.requested_by_name %}
+      {% include "lab/_field.html" with field=form.requested_by_email %}
+      {% include "lab/_field.html" with field=form.cc_emails %}
+      {% include "lab/_field.html" with field=form.comments wide=True %}
+    </div>
+  </div>
+  {% if test_groups %}
+  <div class="panel">
+    <h2>Tests requested</h2>
+    {{ form.tests.errors }}
+    {% for group, methods in test_groups %}
+    <h3>{{ group }}</h3>
+    <div class="checks">
+      {% for m in methods %}
+      <label><input type="checkbox" name="tests" value="{{ m.pk }}" {% if m.pk|stringformat:"s" in selected %}checked{% endif %}> {{ m.name }}{% if m.code %} <span class="muted">({{ m.code }})</span>{% endif %}</label>
+      {% endfor %}
+    </div>
+    {% endfor %}
+    <p class="muted">“Results Reported” is added to every sample automatically.</p>
+  </div>
+  {% endif %}
+  <div class="actions">
+    <button type="submit">{% if sample %}Save{% else %}Log sample{% endif %}</button>
+    {% if not sample %}<button type="submit" name="add_another" class="secondary">Log and add another</button>{% endif %}
+    <a href="{% if sample %}{{ sample.get_absolute_url }}{% else %}{% url 'lab:sample_log' %}{% endif %}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

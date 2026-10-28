@@ -1,0 +1,4 @@
+Django>=5.2,<5.3
+reportlab>=4.2
+# Opens report emails directly in desktop Outlook (Windows only).
+pywin32>=306; sys_platform == "win32"

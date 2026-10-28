@@ -1,0 +1,12 @@
+{% extends "lab/base.html" %}
+{% block title %}New calibration{% endblock %}
+{% block content %}
+<h1>New calibration</h1>
+<form method="get" class="panel actions">
+  <label for="blend"><strong>Blend:</strong></label>
+  <select name="blend" id="blend">
+    {% for b in blends %}<option value="{{ b.pk }}">{{ b }}</option>{% endfor %}
+  </select>
+  <button type="submit">Continue</button>
+</form>
+{% endblock %}

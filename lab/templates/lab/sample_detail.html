@@ -1,0 +1,152 @@
+{% extends "lab/base.html" %}
+{% load lab_extras %}
+{% block title %}Sample {{ sample.sample_number }}{% endblock %}
+{% block content %}
+<div class="actions" style="margin-bottom: 8px;">
+  <a href="{% url 'lab:sample_log' %}">← Sample log</a>
+</div>
+<h1>Sample {{ sample.sample_number }} <span class="muted" style="font-weight: 400;">– {{ sample.identification }}</span></h1>
+
+<div class="row">
+  <div class="grow" style="flex: 2;">
+    {% for entry in entries %}
+    {% with test=entry.test method=entry.test.test_method formula=entry.formula %}
+    <section class="test-card" id="test-{{ test.pk }}">
+      <header>
+        <h3>{{ method.name }}{% if method.code %} <span class="muted" style="font-weight: 400;">({{ method.code }})</span>{% endif %}</h3>
+        <span class="pill {{ test.status }}">{{ test.get_status_display }}{% if test.completed_by %} – {{ test.cell_text }}{% endif %}</span>
+        <form method="post" action="{% url 'lab:test_status' test.pk %}" class="status-form">
+          {% csrf_token %}
+          <select name="status" aria-label="Status">
+            {% for value, label in status_choices %}<option value="{{ value }}" {% if value == test.status %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          <button class="small secondary">Set</button>
+        </form>
+      </header>
+
+      {% if method.has_results %}
+      <div class="body">
+        {% if test.results.all %}
+        <table class="data" style="margin-bottom: 10px;">
+          <tr><th>Result</th><th>Value</th><th>Entered</th><th>Based on</th></tr>
+          {% for r in test.results.all %}
+          <tr>
+            <td>{{ r.label|default:method.name }}</td>
+            <td class="num"><strong>{{ r.display_value }}</strong> {{ r.unit }}</td>
+            <td class="muted">{{ r.entered_by|person }}, {{ r.entered_at|date:"m/d/Y H:i" }}</td>
+            <td class="muted">
+              {% if r.formula %}Formula v{{ r.formula.version }}{% if r.formula.is_placeholder %} <span class="pill unverified">placeholder</span>{% endif %}{% endif %}
+              {% if test.calibration and forloop.first %}<a href="{{ test.calibration.get_absolute_url }}">Calibration {{ test.calibration.performed_on|date:"m/d/Y" }}</a>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% endif %}
+
+        {% if method.calc_type == "formula" %}
+          {% if formula %}
+          {% if formula.is_placeholder %}<div class="banner-warn">This is a <strong>placeholder formula</strong> that has not been confirmed by the lab. <a href="{% url 'lab:formula_new_version' method.pk %}">Enter the real formula</a>.</div>{% endif %}
+          <form method="post" action="{% url 'lab:test_results' test.pk %}" data-calc-url="{% url 'lab:test_calculate' test.pk %}">
+            {% csrf_token %}
+            <input type="hidden" name="formula_id" value="{{ formula.pk }}">
+            <div class="inputs">
+              {% for item in formula.inputs %}
+              <div>
+                <label for="in-{{ test.pk }}-{{ item.name }}">{{ item.label }}{% if item.unit %} ({{ item.unit }}){% endif %}</label>
+                <input type="number" step="any" id="in-{{ test.pk }}-{{ item.name }}" name="input_{{ item.name }}" value="{{ entry.previous|get:item.name|default_if_none:'' }}" data-required>
+              </div>
+              {% endfor %}
+              <button type="submit">Save result</button>
+            </div>
+            <div class="muted mono" style="font-size: 12px; margin-top: 6px;">= {{ formula.expression }} (v{{ formula.version }})</div>
+            <div class="calc-output"></div>
+          </form>
+          {% else %}
+          <p class="muted">No formula is set up for this test yet. <a href="{% url 'lab:formula_new_version' method.pk %}">Add one</a>.</p>
+          {% endif %}
+
+        {% elif method.calc_type == "blend" %}
+          {% if not sample.blend %}
+          <p class="muted">Set the sample's blend (<a href="{% url 'lab:sample_edit' sample.pk %}">edit sample</a>) to enter blend analysis data.</p>
+          {% elif not calibration %}
+          <div class="banner-warn">There is no current, verified calibration for {{ sample.blend }}. Results can't be calculated until one exists. <a href="{% url 'lab:calibration_create' %}?blend={{ sample.blend_id }}">Calibrate {{ sample.blend }}</a></div>
+          {% else %}
+          <p class="muted">Using the {{ sample.blend }} calibration from <a href="{{ calibration.get_absolute_url }}">{{ calibration.performed_on|date:"m/d/Y" }}</a> (expires {{ calibration.expires_on|date:"m/d/Y" }}).</p>
+          <form method="post" action="{% url 'lab:test_results' test.pk %}" data-calc-url="{% url 'lab:test_calculate' test.pk %}">
+            {% csrf_token %}
+            <table class="data">
+              <tr><th>Component</th><th>Response factor</th><th>Sample peak area</th></tr>
+              {% for cc in calibration_components %}
+              <tr>
+                <td>{{ cc.component.name }}</td>
+                <td class="num mono">{{ cc.response_factor|num:8 }}</td>
+                <td><input type="number" step="any" name="area_{{ cc.pk }}" aria-label="{{ cc.component.name }} peak area" data-required></td>
+              </tr>
+              {% endfor %}
+            </table>
+            <div class="calc-output"></div>
+            <p><button type="submit">Save results</button></p>
+          </form>
+          {% endif %}
+
+        {% elif method.calc_type == "manual" %}
+          <form method="post" action="{% url 'lab:test_results' test.pk %}" class="inputs">
+            {% csrf_token %}
+            <div><label for="mv-{{ test.pk }}">Result</label><input type="text" id="mv-{{ test.pk }}" name="manual_value" required></div>
+            <div><label for="mu-{{ test.pk }}">Unit</label><input type="text" id="mu-{{ test.pk }}" name="manual_unit" value="{{ method.unit }}" style="width: 90px;"></div>
+            <button type="submit">Save result</button>
+          </form>
+        {% endif %}
+      </div>
+      {% endif %}
+    </section>
+    {% endwith %}
+    {% endfor %}
+
+    {% if addable %}
+    <form method="post" action="{% url 'lab:sample_add_test' sample.pk %}" class="actions panel">
+      {% csrf_token %}
+      <label for="add-test"><strong>Add a test:</strong></label>
+      <select name="test_method" id="add-test">
+        {% for m in addable %}<option value="{{ m.pk }}">{{ m.name }}</option>{% endfor %}
+      </select>
+      <button class="secondary">Add</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="grow" style="max-width: 420px;">
+    <div class="panel">
+      <h2>Details <a href="{% url 'lab:sample_edit' sample.pk %}" style="font-size: 13px; font-weight: 400;">Edit</a></h2>
+      <dl class="info">
+        <dt>Received</dt><dd>{{ sample.received_on|date:"m/d/Y" }} (Julian {{ sample.julian }})</dd>
+        <dt>Type</dt><dd>{{ sample.get_sample_type_display }}{% if sample.phase %}, {{ sample.get_phase_display }}{% endif %}</dd>
+        {% if sample.blend %}<dt>Blend</dt><dd>{{ sample.blend }}</dd>{% endif %}
+        <dt>LTO #</dt><dd>{{ sample.lto|default:"—" }}</dd>
+        <dt>Source</dt><dd>{{ sample.source|default:"—" }}</dd>
+        <dt>Requested by</dt><dd>{{ sample.requested_by_name|default:"—" }}{% if sample.requested_by_email %}<br><span class="muted">{{ sample.requested_by_email }}</span>{% endif %}</dd>
+        {% if sample.cc_emails %}<dt>CC</dt><dd>{{ sample.cc_emails }}</dd>{% endif %}
+        <dt>Logged by</dt><dd>{{ sample.received_by|person }}</dd>
+        {% if sample.comments %}<dt>Comments</dt><dd>{{ sample.comments|linebreaksbr }}</dd>{% endif %}
+      </dl>
+    </div>
+
+    <div class="panel">
+      <h2>Report</h2>
+      {% for report in reports %}
+      <p><a href="{{ report.get_absolute_url }}">{{ report.report_number }}</a> <span class="pill {{ report.status }}">{{ report.get_status_display }}</span></p>
+      {% endfor %}
+      <form method="post" action="{% url 'lab:report_create' sample.pk %}">
+        {% csrf_token %}
+        {% if related %}
+        <p class="muted" style="margin-top: 0;">Include other samples with LTO {{ sample.lto }}:</p>
+        {% for other in related %}
+        <label style="display: block;"><input type="checkbox" name="samples" value="{{ other.pk }}"> {{ other.sample_number }} – {{ other.identification|truncatechars:40 }}</label>
+        {% endfor %}
+        {% endif %}
+        <p><button type="submit">{% if reports %}Create another report{% else %}Create report{% endif %}</button></p>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "lab/base.html" %}
+{% load lab_extras %}
+{% block title %}Calibrations{% endblock %}
+{% block content %}
+<div class="actions" style="justify-content: space-between;">
+  <h1>Calibrations</h1>
+  <a class="btn" href="{% url 'lab:calibration_create' %}">+ New calibration</a>
+</div>
+
+<div class="panel">
+  <h2>Current status by blend</h2>
+  <table class="data">
+    <tr><th>Blend</th><th>Active calibration</th><th>Expires</th><th></th></tr>
+    {% for blend, cal in blend_status %}
+    <tr>
+      <td>{{ blend }}</td>
+      {% if cal %}
+      <td><a href="{{ cal.get_absolute_url }}">{{ cal.performed_on|date:"m/d/Y" }}</a> by {{ cal.performed_by|person }}</td>
+      <td>{{ cal.expires_on|date:"m/d/Y" }} <span class="muted">({{ cal.days_until_expiry }} days)</span></td>
+      {% else %}
+      <td colspan="2"><span class="pill failed">No verified calibration</span></td>
+      {% endif %}
+      <td><a href="{% url 'lab:calibration_create' %}?blend={{ blend.pk }}">Calibrate</a></td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="4" class="muted">No blends yet. Add them in Admin → Blends.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="panel">
+  <form method="get" class="actions" style="margin-bottom: 10px;">
+    <a href="?" class="btn small {% if archive %}secondary{% endif %}">Current</a>
+    <a href="?view=archive" class="btn small {% if not archive %}secondary{% endif %}">Archive (expired)</a>
+    {% if archive %}<input type="hidden" name="view" value="archive">{% endif %}
+    <select name="blend" onchange="this.form.submit()" aria-label="Blend">
+      <option value="">All blends</option>
+      {% for b in blends %}<option value="{{ b.pk }}" {% if b.pk|stringformat:"s" == blend_id %}selected{% endif %}>{{ b }}</option>{% endfor %}
+    </select>
+  </form>
+  <table class="data">
+    <tr><th>Blend</th><th>Calibrated</th><th>By</th><th>Standard cylinder</th><th>Expires</th><th>Status</th></tr>
+    {% for cal in calibrations %}
+    <tr>
+      <td><a href="{{ cal.get_absolute_url }}">{{ cal.blend }}</a></td>
+      <td>{{ cal.performed_on|date:"m/d/Y" }}</td>
+      <td>{{ cal.performed_by|person }}</td>
+      <td>{{ cal.standard_cylinder }}</td>
+      <td>{{ cal.expires_on|date:"m/d/Y" }}</td>
+      <td><span class="pill {{ cal.status }}">{{ cal.status|capfirst }}</span></td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="6" class="muted">{% if archive %}No expired calibrations.{% else %}No current calibrations.{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

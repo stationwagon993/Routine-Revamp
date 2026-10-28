@@ -1,0 +1,14 @@
+# Local configuration and secrets
+config.ini
+.secret_key
+
+# Data - never commit lab data to this repository
+*.sqlite3
+*.sqlite3-journal
+reports/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

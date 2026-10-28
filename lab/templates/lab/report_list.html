@@ -1,0 +1,20 @@
+{% extends "lab/base.html" %}
+{% load lab_extras %}
+{% block title %}Reports{% endblock %}
+{% block content %}
+<h1>Reports</h1>
+<table class="data">
+  <tr><th>Report #</th><th>Samples</th><th>Status</th><th>Created</th><th>Sent</th></tr>
+  {% for report in reports %}
+  <tr>
+    <td><a href="{{ report.get_absolute_url }}">{{ report.report_number }}</a></td>
+    <td>{% for s in report.samples.all %}{{ s.sample_number }}{% if not forloop.last %}, {% endif %}{% endfor %}</td>
+    <td><span class="pill {{ report.status }}">{{ report.get_status_display }}</span></td>
+    <td>{{ report.created_at|date:"m/d/Y" }} {{ report.created_by|person }}</td>
+    <td>{{ report.sent_at|date:"m/d/Y"|default:"—" }}</td>
+  </tr>
+  {% empty %}
+  <tr><td colspan="5" class="muted">No reports yet. Create one from a sample's page.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}
