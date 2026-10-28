@@ -1,0 +1,1379 @@
+<title>Routine Revamp</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one working surface under a sticky lab toolbar; the sample log is a spreadsheet-style grid, everything else is a narrow work column. */
+:root {
+  --bg: #f3f5f5;
+  --surface: #ffffff;
+  --surface-2: #eaeeee;
+  --fg: #182224;
+  --muted: #586769;
+  --line: #cfd8d9;
+  --accent: #0d6468;
+  --accent-fg: #ffffff;
+  --accent-soft: #dcecec;
+  --bar: #12393b;
+  --bar-fg: #d9ecec;
+  --st-requested: #f7e94a;
+  --st-requested-fg: #3d3500;
+  --st-completed: #1f9d4c;
+  --st-completed-fg: #ffffff;
+  --st-compiling: #f5a623;
+  --st-compiling-fg: #3a2400;
+  --st-cancelled: #d93a3a;
+  --st-cancelled-fg: #ffffff;
+  --st-oldest: #2a8fd0;
+  --st-oldest-fg: #ffffff;
+  --good: #1b7a3d;
+  --good-soft: #e0f3e6;
+  --bad: #b42323;
+  --bad-soft: #fbe5e5;
+  --warn-soft: #fff4d4;
+  --warn-line: #e2b42c;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-cond: "IBM Plex Sans Condensed", "Arial Narrow", "IBM Plex Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111819; --surface: #182224; --surface-2: #213033; --fg: #e3eced; --muted: #9db0b2; --line: #33474a;
+    --accent: #5cc3c5; --accent-fg: #0b1d1e; --accent-soft: #1d3c3e; --bar: #0b2324; --bar-fg: #cfe6e6;
+    --st-requested: #d9c92c; --st-requested-fg: #1f1a00; --st-completed: #2a9a52; --st-completed-fg: #ffffff;
+    --st-compiling: #d98e1a; --st-compiling-fg: #1f1300; --st-cancelled: #c53b3b; --st-cancelled-fg: #ffffff;
+    --st-oldest: #2f86c0; --st-oldest-fg: #ffffff;
+    --good: #6dd394; --good-soft: #17331f; --bad: #f08a8a; --bad-soft: #3a1b1b; --warn-soft: #382e10; --warn-line: #a88516;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111819; --surface: #182224; --surface-2: #213033; --fg: #e3eced; --muted: #9db0b2; --line: #33474a;
+  --accent: #5cc3c5; --accent-fg: #0b1d1e; --accent-soft: #1d3c3e; --bar: #0b2324; --bar-fg: #cfe6e6;
+  --st-requested: #d9c92c; --st-requested-fg: #1f1a00; --st-completed: #2a9a52; --st-completed-fg: #ffffff;
+  --st-compiling: #d98e1a; --st-compiling-fg: #1f1300; --st-cancelled: #c53b3b; --st-cancelled-fg: #ffffff;
+  --st-oldest: #2f86c0; --st-oldest-fg: #ffffff;
+  --good: #6dd394; --good-soft: #17331f; --bad: #f08a8a; --bad-soft: #3a1b1b; --warn-soft: #382e10; --warn-line: #a88516;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { background: var(--bg); color: var(--fg); }
+body { font-family: var(--font-body); font-size: 14px; line-height: 1.45; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bar); }
+a { color: var(--accent); }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+h1 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.05rem; font-weight: 600; }
+h3 { font-size: 0.95rem; font-weight: 600; }
+.mono, code { font-family: var(--font-mono); }
+.num { font-variant-numeric: tabular-nums; text-align: right; }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+
+.bar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--bar); color: var(--bar-fg);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; align-items: center; gap: 4px 2px; flex-wrap: wrap;
+}
+.bar .brand { font-family: var(--font-cond); font-weight: 600; font-size: 1.05rem; letter-spacing: 0.02em; margin-right: 14px; padding-block: 10px; }
+.bar .brand small { font-weight: 500; opacity: 0.7; margin-left: 6px; font-size: 0.8rem; }
+.bar a { color: var(--bar-fg); text-decoration: none; padding: 10px 10px; border-bottom: 2px solid transparent; }
+.bar a:hover { color: #fff; }
+.bar a[aria-current="page"] { color: #fff; border-bottom-color: var(--st-requested); }
+.bar .spacer { flex: 1; }
+.bar .who { font-size: 0.85rem; opacity: 0.85; padding-block: 10px; }
+
+main { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px 40px; display: grid; gap: 14px; }
+.narrow { max-width: 1080px; width: 100%; margin-inline: auto; display: grid; gap: 14px; }
+.head { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; }
+.head .spacer { flex: 1; }
+.crumb { font-size: 0.85rem; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 10px; min-width: 0; }
+.cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 820px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); border-radius: 4px; padding: 6px 12px; cursor: pointer; text-decoration: none; font-weight: 500; white-space: nowrap; }
+.btn.ghost { background: transparent; color: var(--accent); }
+.btn.danger { background: transparent; color: var(--bad); border-color: var(--bad); }
+.btn.sm { padding: 3px 9px; font-size: 0.85rem; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+input[type=text], input[type=email], input[type=date], input[type=number], input[type=search], select, textarea {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; max-width: 100%; min-width: 0;
+}
+textarea { width: 100%; resize: vertical; }
+.form { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 10px 16px; }
+.field { display: grid; gap: 3px; min-width: 0; }
+.field.wide { grid-column: 1 / -1; }
+.field label, .label { font-size: 0.78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.field input, .field select, .field textarea { width: 100%; }
+.hint { font-size: 0.8rem; color: var(--muted); }
+.err { color: var(--bad); font-size: 0.85rem; }
+.checks { columns: 3 220px; column-gap: 16px; }
+.checks label { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; break-inside: avoid; }
+
+.banner { border: 1px solid var(--warn-line); background: var(--warn-soft); border-radius: 4px; padding: 8px 12px; }
+.banner.bad { border-color: var(--bad); background: var(--bad-soft); }
+.toast { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); background: var(--fg); color: var(--bg); padding: 10px 14px; border-radius: 4px; z-index: 20; max-width: min(420px, calc(100vw - 32px)); }
+
+.scroll { overflow-x: auto; }
+table.data { border-collapse: collapse; width: 100%; background: var(--surface); }
+table.data th, table.data td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: middle; }
+table.data th { background: var(--surface-2); font-weight: 600; font-size: 0.85rem; }
+table.data td.num { text-align: right; }
+table.data input { width: 9em; }
+
+.pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
+.pill.requested { background: var(--st-requested); color: var(--st-requested-fg); }
+.pill.completed { background: var(--st-completed); color: var(--st-completed-fg); }
+.pill.compiling { background: var(--st-compiling); color: var(--st-compiling-fg); }
+.pill.cancelled { background: var(--st-cancelled); color: var(--st-cancelled-fg); }
+.pill.good { background: var(--good-soft); color: var(--good); border-color: var(--good); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); border-color: var(--bad); }
+.pill.warn { background: var(--warn-soft); color: var(--fg); border-color: var(--warn-line); }
+.pill.plain { background: var(--surface-2); color: var(--muted); border-color: var(--line); }
+
+/* Sample log grid */
+.tools { display: flex; gap: 8px 10px; flex-wrap: wrap; align-items: center; }
+.legend { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 0.8rem; color: var(--muted); }
+.legend span { display: inline-flex; gap: 5px; align-items: center; }
+.sw { display: inline-block; min-width: 24px; height: 16px; padding: 0 4px; font: 600 11px/16px var(--font-mono); text-align: center; border: 1px solid var(--line); border-radius: 2px; }
+.logwrap { overflow: auto; max-height: calc(100vh - 230px); min-height: 240px; border: 1px solid var(--line); background: var(--surface); border-radius: 4px; }
+table.log { border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
+table.log th, table.log td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 3px 6px; white-space: nowrap; background: var(--surface); }
+table.log thead th { position: sticky; background: var(--surface-2); z-index: 2; font-family: var(--font-cond); }
+table.log thead tr.g th { top: 0; height: 26px; text-align: center; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+table.log thead tr.c th { top: 26px; vertical-align: bottom; text-align: left; font-weight: 600; }
+table.log th.v { width: 30px; height: 172px; padding: 5px 2px; }
+table.log th.v span { writing-mode: vertical-rl; transform: rotate(180deg); white-space: normal; max-height: 166px; display: inline-block; line-height: 1.12; font-size: 12px; }
+table.log th.v small { font-family: var(--font-mono); font-weight: 400; font-size: 10px; color: var(--muted); }
+table.log .stick { position: sticky; left: 0; z-index: 1; }
+table.log thead .stick { z-index: 3; }
+table.log tbody tr { cursor: pointer; }
+table.log tbody tr:hover td { background: var(--accent-soft); }
+table.log td.sn { font-family: var(--font-mono); font-weight: 500; }
+table.log td.sn a { color: inherit; text-decoration: none; }
+table.log td.id { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+table.log td.cell { width: 30px; text-align: center; font: 600 11px var(--font-mono); }
+table.log tbody tr td.requested { background: var(--st-requested); color: var(--st-requested-fg); }
+table.log tbody tr td.completed { background: var(--st-completed); color: var(--st-completed-fg); }
+table.log tbody tr td.compiling { background: var(--st-compiling); color: var(--st-compiling-fg); }
+table.log tbody tr td.cancelled { background: var(--st-cancelled); color: var(--st-cancelled-fg); }
+table.log tbody tr td.oldest { background: var(--st-oldest); color: var(--st-oldest-fg); }
+
+/* Sample page */
+dl.info { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; }
+dl.info dt { color: var(--muted); font-size: 0.85rem; }
+dl.info dd { margin: 0; overflow-wrap: anywhere; }
+.test { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); min-width: 0; }
+.test > header { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--surface-2); border-radius: 6px 6px 0 0; }
+.test > header h3 { flex: 1; min-width: 160px; }
+.test > header .code { font-family: var(--font-mono); font-weight: 400; color: var(--muted); font-size: 0.8rem; }
+.test .body { padding: 10px 12px; display: grid; gap: 10px; }
+.test.collapsed .body { display: none; }
+.test.collapsed > header { border-bottom: 0; border-radius: 6px; }
+.inputs { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; }
+.inputs .field input { width: 9.5em; }
+.out { font-size: 1.05rem; min-height: 1.5em; }
+.out b { font-family: var(--font-mono); font-weight: 500; }
+.expr { font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }
+
+.empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+.list { display: grid; gap: 6px; }
+@media (prefers-reduced-motion: no-preference) { .toast { animation: rise 0.18s ease-out; } @keyframes rise { from { transform: translateY(6px); opacity: 0; } } }
+</style>
+
+<header class="bar" id="bar">
+  <span class="brand">Routine Revamp<small id="labName"></small></span>
+  <a href="#log" data-nav="log">Sample Log</a>
+  <a href="#intake" data-nav="intake">New Sample</a>
+  <a href="#reports" data-nav="reports">Reports</a>
+  <a href="#calibrations" data-nav="calibrations">Calibrations</a>
+  <a href="#formulas" data-nav="formulas">Formulas</a>
+  <a href="#setup" data-nav="setup">Setup</a>
+  <span class="spacer"></span>
+  <span class="who" id="who"></span>
+</header>
+<main id="main">
+  <div class="panel empty" id="boot">
+    <h2>Loading the lab data…</h2>
+    <p>The sample log, calibrations and reports load from this page's shared database.</p>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ */
+/* Safe formula engine: arithmetic only, never eval.                   */
+/* ------------------------------------------------------------------ */
+const FUNCS = { abs: Math.abs, min: Math.min, max: Math.max, round: Math.round, sqrt: Math.sqrt, log: Math.log, log10: Math.log10, exp: Math.exp };
+const CONSTS = { pi: Math.PI, e: Math.E };
+
+function parseFormula(src) {
+  const tokens = [];
+  const re = /\s*(?:(\d+(?:\.\d*)?(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)|([A-Za-z_][A-Za-z0-9_]*)|(\*\*|[-+*/%^(),]))/y;
+  const text = String(src || "").trim();
+  if (!text) throw new Error("The formula is empty.");
+  let pos = 0;
+  while (pos < text.length) {
+    re.lastIndex = pos;
+    const m = re.exec(text);
+    if (!m || m[0].length === 0) {
+      if (/^\s+$/.test(text.slice(pos))) break;
+      throw new Error(`"${text.slice(pos).trim()[0]}" is not allowed in a formula.`);
+    }
+    pos = re.lastIndex;
+    if (m[1] !== undefined) tokens.push({ t: "num", v: parseFloat(m[1]) });
+    else if (m[2] !== undefined) tokens.push({ t: "name", v: m[2] });
+    else tokens.push({ t: "op", v: m[3] === "**" ? "^" : m[3] });
+  }
+  let i = 0;
+  const peek = () => tokens[i];
+  const take = (v) => { const tk = tokens[i]; if (tk && tk.t === "op" && tk.v === v) { i++; return true; } return false; };
+  const names = new Set();
+  function expr() { let n = term(); for (;;) { if (take("+")) n = { op: "+", a: n, b: term() }; else if (take("-")) n = { op: "-", a: n, b: term() }; else return n; } }
+  function term() { let n = unary(); for (;;) { if (take("*")) n = { op: "*", a: n, b: unary() }; else if (take("/")) n = { op: "/", a: n, b: unary() }; else if (take("%")) n = { op: "%", a: n, b: unary() }; else return n; } }
+  function unary() { if (take("-")) return { op: "neg", a: unary() }; if (take("+")) return unary(); return power(); }
+  function power() { const base = primary(); if (take("^")) return { op: "^", a: base, b: unary() }; return base; }
+  function primary() {
+    const tk = peek();
+    if (!tk) throw new Error("The formula ends too early.");
+    if (tk.t === "num") { i++; return { num: tk.v }; }
+    if (tk.t === "name") {
+      i++;
+      if (take("(")) {
+        if (!FUNCS[tk.v]) throw new Error(`Unknown function "${tk.v}". Allowed: ${Object.keys(FUNCS).join(", ")}.`);
+        const args = [];
+        if (!take(")")) { do { args.push(expr()); } while (take(",")); if (!take(")")) throw new Error("A closing ) is missing."); }
+        return { fn: tk.v, args };
+      }
+      if (!(tk.v in CONSTS)) names.add(tk.v);
+      return { name: tk.v };
+    }
+    if (take("(")) { const n = expr(); if (!take(")")) throw new Error("A closing ) is missing."); return n; }
+    throw new Error(`Unexpected "${tk.v}".`);
+  }
+  const ast = expr();
+  if (i < tokens.length) throw new Error(`Unexpected "${tokens[i].v}".`);
+  return { ast, names };
+}
+
+function checkFormula(src, inputNames) {
+  const { ast, names } = parseFormula(src);
+  const unknown = [...names].filter((n) => !inputNames.includes(n));
+  if (unknown.length) throw new Error(`The formula uses names that are not inputs: ${unknown.join(", ")}.`);
+  return ast;
+}
+
+function evalAst(n, vals) {
+  if ("num" in n) return n.num;
+  if ("name" in n) return n.name in vals ? vals[n.name] : CONSTS[n.name];
+  if (n.fn) return FUNCS[n.fn](...n.args.map((a) => evalAst(a, vals)));
+  const a = evalAst(n.a, vals);
+  if (n.op === "neg") return -a;
+  const b = evalAst(n.b, vals);
+  switch (n.op) {
+    case "+": return a + b;
+    case "-": return a - b;
+    case "*": return a * b;
+    case "/": if (b === 0) throw new Error("Division by zero."); return a / b;
+    case "%": return a % b;
+    case "^": if (Math.abs(b) > 100) throw new Error("Exponent is too large."); return Math.pow(a, b);
+  }
+  throw new Error("Unsupported formula.");
+}
+
+function runFormula(formula, raw) {
+  const names = formula.inputs.map((x) => x.name);
+  const ast = checkFormula(formula.expression, names);
+  const vals = {};
+  for (const inp of formula.inputs) {
+    const s = String(raw[inp.name] ?? "").trim();
+    if (s === "" || !isFinite(Number(s))) throw new Error(`Enter a number for ${inp.label || inp.name}.`);
+    vals[inp.name] = Number(s);
+  }
+  const v = evalAst(ast, vals);
+  if (!isFinite(v)) throw new Error("The calculation did not give a finite number.");
+  return { value: v, inputs: vals };
+}
+
+/* ------------------------------------------------------------------ */
+/* Helpers                                                             */
+/* ------------------------------------------------------------------ */
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const pad = (n, w = 2) => String(n).padStart(w, "0");
+function today() { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function parseDate(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
+function fmtDate(s) { if (!s) return ""; const [y, m, d] = s.slice(0, 10).split("-"); return `${m}/${d}/${y}`; }
+function fmtStamp(iso) { if (!iso) return ""; const d = new Date(iso); return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function julian(s) { const d = parseDate(s); const start = new Date(d.getFullYear(), 0, 1); const doy = Math.round((d - start) / 86400000) + 1; return `${String(d.getFullYear()).slice(2)}${pad(doy, 3)}`; }
+function addMonths(s, n) { const d = parseDate(s); const t = new Date(d.getFullYear(), d.getMonth() + n, 1); const last = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate(); t.setDate(Math.min(d.getDate(), last)); return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`; }
+function daysUntil(s) { return Math.round((parseDate(s) - parseDate(today())) / 86400000); }
+function fixed(v, d) { return v === null || v === undefined || v === "" ? "" : Number(v).toFixed(d); }
+function uid36() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || uid36(); }
+let toastTimer = null;
+function toast(msg) {
+  $$(".toast").forEach((x) => x.remove());
+  clearTimeout(toastTimer);
+  const t = document.createElement("div"); t.className = "toast"; t.setAttribute("role", "status"); t.textContent = msg;
+  document.body.appendChild(t);
+  toastTimer = setTimeout(() => t.remove(), 3800);
+}
+
+const GROUPS = [["general", "General"], ["refrigerant", "Refrigerant"], ["oil", "Oil"]];
+const TYPES = { tracking: "Status only", manual: "Typed-in result", formula: "Calculated from a formula", blend: "Blend analysis from calibration" };
+const STATUS = { requested: "Analysis requested", compiling: "Test run, data needs compiling", completed: "Testing completed", cancelled: "Testing cancelled" };
+const OPEN = new Set(["requested", "compiling"]);
+const RESULTS_REPORTED = "results-reported";
+
+/* ------------------------------------------------------------------ */
+/* State, loaded live from the shared database                         */
+/* ------------------------------------------------------------------ */
+const S = {
+  db: null, user: null, uid: null, canWrite: true,
+  loaded: new Set(),
+  methods: [], formulas: [], blends: [], cals: [], samples: [], reports: [], people: {},
+  settings: { labName: "", tolerance: 0.03, validMonths: 6, signature: "" },
+  profiles: {},
+};
+const COLLECTIONS = ["methods", "formulas", "blends", "calibrations", "samples", "reports", "people"];
+
+const methodById = (id) => S.methods.find((m) => m.id === id);
+const blendById = (id) => S.blends.find((b) => b.id === id);
+const calById = (id) => S.cals.find((c) => c.id === id);
+const sampleById = (id) => S.samples.find((s) => s.id === id);
+function orderedMethods(list = S.methods) {
+  const g = GROUPS.map((x) => x[0]);
+  return [...list].sort((a, b) => g.indexOf(a.group) - g.indexOf(b.group) || (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name));
+}
+function currentFormula(methodId) {
+  return S.formulas.filter((f) => f.methodId === methodId).sort((a, b) => b.version - a.version)[0] || null;
+}
+function formulaById(id) { return S.formulas.find((f) => f.id === id); }
+
+function personName(id) { if (!id) return ""; return (S.profiles[id] && S.profiles[id].name) || "Someone"; }
+function initials(id) {
+  if (!id) return "";
+  const own = S.people[id] && S.people[id].initials;
+  if (own) return own;
+  const n = S.profiles[id] && S.profiles[id].name;
+  if (n) return n.split(/\s+/).filter(Boolean).map((p) => p[0]).join("").slice(0, 3).toUpperCase();
+  return "✓";
+}
+
+/* Calibrations */
+function verificationPassed(cal, v) {
+  if (!v || !v.rows || !v.rows.length) return false;
+  return v.rows.every((r) => Math.abs(verifyCalc(cal, r).diff) <= Number(S.settings.tolerance) + 1e-9);
+}
+function compRF(c) { const mean = (Number(c.a1) + Number(c.a2) + Number(c.a3)) / 3; return { mean, rf: Number(c.std) / mean }; }
+function verifyCalc(cal, row) {
+  const comp = cal.components.find((c) => c.name === row.name);
+  const calc = Number(row.area) * compRF(comp).rf;
+  return { calc, diff: calc - Number(row.theo) };
+}
+function latestVerification(cal) { const v = cal.verifications || []; return v.length ? v[v.length - 1] : null; }
+function calStatus(cal) {
+  if (daysUntil(cal.expires) < 0) return "expired";
+  const v = latestVerification(cal);
+  if (!v) return "unverified";
+  return verificationPassed(cal, v) ? "active" : "failed";
+}
+const CAL_LABEL = { active: ["Active", "good"], unverified: ["Needs verification", "warn"], failed: ["Verification failed", "bad"], expired: ["Expired", "plain"] };
+function activeCal(blendId) {
+  return S.cals.filter((c) => c.blendId === blendId && c.on <= today() && calStatus(c) === "active").sort((a, b) => b.on.localeCompare(a.on))[0] || null;
+}
+
+/* Samples */
+function sampleTests(s) {
+  const tests = s.tests || {};
+  return orderedMethods(S.methods.filter((m) => tests[m.id])).map((m) => ({ method: m, t: tests[m.id] }));
+}
+function isOpen(s) { return Object.values(s.tests || {}).some((t) => OPEN.has(t.status)); }
+function oldestOpen() { return [...S.samples].filter(isOpen).sort((a, b) => a.julian.localeCompare(b.julian) || a.seq - b.seq)[0] || null; }
+function cellText(t) { if (!t) return ""; if (t.status === "completed") return initials(t.by); if (t.status === "requested") return "-"; return ""; }
+function displayValue(r) { return r.value === null || r.value === undefined ? (r.text || "") : Number(r.value).toFixed(r.decimals ?? 2); }
+function usesPlaceholder(s) {
+  return Object.values(s.tests || {}).some((t) => t.formulaId && formulaById(t.formulaId) && formulaById(t.formulaId).placeholder);
+}
+
+/* ------------------------------------------------------------------ */
+/* Writes                                                               */
+/* ------------------------------------------------------------------ */
+async function write(fn, okMsg) {
+  if (!S.db) { toast("The lab database isn't available in this view."); return false; }
+  try { await fn(); if (okMsg) toast(okMsg); return true; }
+  catch (e) {
+    const code = e && e.code;
+    if (code === "invalid_argument" && S.canWrite !== true) { S.canWrite = false; render(); toast("You have view-only access, so changes can't be saved."); }
+    else if (code === "quota_exceeded") toast("The lab database is full. Delete old records to free space.");
+    else toast(e && e.message ? e.message : "The change could not be saved. Try again.");
+    return false;
+  }
+}
+
+async function nextSequence(jul) {
+  const ref = S.db.doc("counters/" + jul);
+  const holder = S.uid || "tab-" + uid36();
+  for (let tries = 0; tries < 25; tries++) {
+    const lease = await ref.acquire({ holder, ttlMs: 6000 });
+    if (lease.acquired) {
+      const snap = await ref.get();
+      const last = (snap.exists && Number(snap.data().last)) || 0;
+      const seen = Math.max(0, ...S.samples.filter((s) => s.julian === jul).map((s) => s.seq));
+      const n = Math.max(last, seen) + 1;
+      await ref.set({ last: n });
+      return n;
+    }
+    await sleep(250 + Math.random() * 400);
+  }
+  throw new Error("Someone else is logging a sample right now. Try again in a moment.");
+}
+
+/* ------------------------------------------------------------------ */
+/* Routing and rendering                                                */
+/* ------------------------------------------------------------------ */
+let ui = { q: "", show: "all", expanded: {}, confirm: null };
+function route() { return (location.hash || "#log").slice(1) || "log"; }
+function go(h) { if (location.hash === "#" + h) render(); else location.hash = h; }
+
+function captureForm() {
+  const kept = {};
+  $$("#main [id]").forEach((el) => { if (el.dataset.dirty && "value" in el) kept[el.id] = el.type === "checkbox" ? el.checked : el.value; });
+  const f = document.activeElement && document.activeElement.id;
+  return { kept, focus: f, route: route() };
+}
+function restoreForm(st) {
+  if (st.route !== route()) return;
+  for (const [id, v] of Object.entries(st.kept)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (el.type === "checkbox") el.checked = v; else el.value = v;
+    el.dataset.dirty = "1";
+  }
+  if (st.focus) { const el = document.getElementById(st.focus); if (el) el.focus(); }
+  $$("#main [data-live]").forEach((el) => el.dispatchEvent(new Event("input", { bubbles: true })));
+}
+
+let renderQueued = false;
+function scheduleRender() { if (renderQueued) return; renderQueued = true; requestAnimationFrame(() => { renderQueued = false; render(); }); }
+
+function render() {
+  const r = route();
+  $$("[data-nav]").forEach((a) => {
+    const n = a.dataset.nav;
+    const on = r === n || r.startsWith(n.replace(/s$/, "") + "-") || (n === "log" && (r.startsWith("sample-") || r.startsWith("edit-"))) || (n === "calibrations" && (r === "calibrate" || r.startsWith("verify-"))) || (n === "formulas" && r.startsWith("formula-"));
+    if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  });
+  $("#labName").textContent = S.settings.labName ? "· " + S.settings.labName : "";
+  const main = $("#main");
+  if (!S.db) { main.innerHTML = noDbView(); return; }
+  if (!COLLECTIONS.every((c) => S.loaded.has(c))) return;
+  const st = captureForm();
+  let html;
+  if (r === "log") html = logView();
+  else if (r === "intake") html = sampleForm(null);
+  else if (r.startsWith("edit-")) html = sampleForm(sampleById(r.slice(5)));
+  else if (r.startsWith("sample-")) html = sampleView(sampleById(r.slice(7)));
+  else if (r === "reports") html = reportsView();
+  else if (r.startsWith("report-")) html = reportView(S.reports.find((x) => x.id === r.slice(7)));
+  else if (r === "calibrations") html = calsView();
+  else if (r === "calibrate") html = calForm();
+  else if (r.startsWith("calibration-")) html = calView(calById(r.slice(12)));
+  else if (r.startsWith("verify-")) html = verifyForm(calById(r.slice(7)));
+  else if (r === "formulas") html = formulasView();
+  else if (r.startsWith("formula-")) html = formulaForm(methodById(r.slice(8)));
+  else if (r === "setup") html = setupView();
+  else html = logView();
+  const banner = S.canWrite === false ? `<div class="banner">You have view-only access. Ask the page owner to give you Contributor or Editor access to log samples and enter results.</div>` : "";
+  main.innerHTML = banner + html;
+  restoreForm(st);
+  if (S.canWrite === false) $$("#main [data-write]").forEach((el) => { el.disabled = true; });
+}
+
+function noDbView() {
+  return `<div class="narrow"><div class="panel empty"><h2>The lab database isn't available here</h2>
+  <p>Open this page in claude.ai while signed in. The sample log, calibrations and reports are stored with the page and shared by everyone who has access to it.</p></div></div>`;
+}
+
+/* ---------- Sample log ---------- */
+function logView() {
+  const methods = orderedMethods(S.methods.filter((m) => m.active !== false));
+  const oldest = oldestOpen();
+  const q = ui.q.trim().toLowerCase();
+  let rows = [...S.samples].sort((a, b) => b.julian.localeCompare(a.julian) || b.seq - a.seq);
+  if (ui.show === "open") rows = rows.filter(isOpen);
+  if (q) rows = rows.filter((s) => [s.number, s.identification, s.lto, s.source, s.requestedBy, s.comments].some((x) => String(x || "").toLowerCase().includes(q)));
+  const groups = GROUPS.map(([g, label]) => [label, methods.filter((m) => m.group === g)]).filter(([, ms]) => ms.length);
+  const expiring = S.blends.map((b) => activeCal(b.id)).filter((c) => c && daysUntil(c.expires) <= 14);
+
+  const head1 = `<tr class="g"><th class="stick"></th><th colspan="3"></th>${groups.map(([l, ms]) => `<th colspan="${ms.length}">${l === "General" ? "" : esc(l)}</th>`).join("")}</tr>`;
+  const head2 = `<tr class="c"><th class="stick">Sample #</th><th>Sample Identification</th><th>LTO</th><th>Comments</th>${groups.map(([, ms]) => ms.map((m) => `<th class="v" title="${esc(m.name)}"><span>${esc(m.name)}${m.code ? ` <small>(${esc(m.code)})</small>` : ""}</span></th>`).join("")).join("")}</tr>`;
+  const body = rows.map((s) => {
+    const cells = groups.map(([, ms]) => ms.map((m) => {
+      const t = (s.tests || {})[m.id];
+      return `<td class="cell ${t ? t.status : ""}" ${t ? `title="${esc(m.name)}: ${esc(STATUS[t.status])}"` : ""}>${esc(cellText(t))}</td>`;
+    }).join("")).join("");
+    return `<tr data-href="sample-${esc(s.id)}"><td class="stick sn ${oldest && oldest.id === s.id ? "oldest" : ""}"><a href="#sample-${esc(s.id)}">${esc(s.number)}</a></td><td class="id" title="${esc(s.identification)}">${esc(s.identification)}</td><td>${esc(s.lto)}</td><td class="id" title="${esc(s.comments)}">${esc((s.comments || "").slice(0, 40))}</td>${cells}</tr>`;
+  }).join("");
+
+  return `
+  ${expiring.map((c) => `<div class="banner">The ${esc(blendById(c.blendId)?.name)} calibration expires ${fmtDate(c.expires)} (${daysUntil(c.expires)} days). <a href="#calibrate">Calibrate now</a></div>`).join("")}
+  <div class="tools">
+    <h1>Sample Log</h1>
+    <input type="search" id="logq" placeholder="Search sample #, ID, LTO, source…" value="${esc(ui.q)}" aria-label="Search samples" style="width:min(300px,100%)">
+    <select id="logshow" aria-label="Which samples">
+      <option value="all" ${ui.show === "all" ? "selected" : ""}>All samples</option>
+      <option value="open" ${ui.show === "open" ? "selected" : ""}>In process only</option>
+    </select>
+    <span style="flex:1"></span>
+    <a class="btn" href="#intake">+ New sample</a>
+  </div>
+  <div class="legend">
+    <span><span class="sw" style="background:var(--st-requested);color:var(--st-requested-fg)">-</span>Analysis requested</span>
+    <span><span class="sw" style="background:var(--st-completed);color:var(--st-completed-fg)">CS</span>Testing completed (initials)</span>
+    <span><span class="sw" style="background:var(--st-compiling)"></span>Test run, data needs compiling</span>
+    <span><span class="sw" style="background:var(--st-cancelled)"></span>Testing cancelled</span>
+    <span><span class="sw" style="background:var(--st-oldest);color:var(--st-oldest-fg)">${esc(oldest ? oldest.number : "—")}</span>Oldest in process</span>
+    <span><span class="sw">${julian(today())}</span>Today's Julian date</span>
+  </div>
+  ${methods.length ? `<div class="logwrap"><table class="log"><thead>${head1}${head2}</thead><tbody>${body || `<tr><td colspan="99" class="empty">${S.samples.length ? "No samples match." : `No samples yet. <a href="#intake">Log the first sample</a>.`}</td></tr>`}</tbody></table></div>`
+  : `<div class="panel empty"><h2>No tests are set up yet</h2><p>Add the sample log's test columns under <a href="#setup">Setup</a>.</p></div>`}`;
+}
+
+/* ---------- Intake / edit ---------- */
+function sampleForm(s) {
+  const editing = !!s;
+  if (route().startsWith("edit-") && !s) return notFound("sample");
+  const v = s || { receivedOn: today(), type: "refrigerant", phase: "", blendId: "", identification: "", source: "", lto: "", requestedBy: "", requestedEmail: "", cc: "", comments: "" };
+  const methods = orderedMethods(S.methods.filter((m) => m.active !== false && !m.everySample));
+  const blends = S.blends.filter((b) => b.active !== false);
+  const opt = (val, label, cur) => `<option value="${esc(val)}" ${val === cur ? "selected" : ""}>${esc(label)}</option>`;
+  return `<div class="narrow">
+  <div class="head">${editing ? `<a class="crumb" href="#sample-${esc(s.id)}">← Sample ${esc(s.number)}</a>` : ""}</div>
+  <h1>${editing ? `Edit sample ${esc(s.number)}` : "Sample intake"}</h1>
+  ${editing ? "" : `<p class="muted">The sample number is assigned when you log it: the Julian date of the received date plus the next sequence number, e.g. ${julian(today())}-1.</p>`}
+  <form id="sampleForm" class="narrow" novalidate>
+    <section class="panel"><h2>Sample</h2><div class="form">
+      <div class="field"><label for="f-received">Received</label><input type="date" id="f-received" value="${esc(v.receivedOn)}" ${editing ? "disabled" : "required"}></div>
+      <div class="field"><label for="f-type">Sample type</label><select id="f-type">${opt("refrigerant", "Refrigerant", v.type)}${opt("oil", "Oil", v.type)}${opt("other", "Other", v.type)}</select></div>
+      <div class="field"><label for="f-phase">Phase</label><select id="f-phase">${opt("", "—", v.phase)}${opt("vapor", "Vapor", v.phase)}${opt("liquid", "Liquid", v.phase)}</select></div>
+      <div class="field"><label for="f-blend">Blend</label><select id="f-blend">${opt("", "—", v.blendId)}${blends.map((b) => opt(b.id, b.name, v.blendId)).join("")}</select><span class="hint">Needed for blend analysis.</span></div>
+      <div class="field wide"><label for="f-ident">Sample identification</label><input type="text" id="f-ident" value="${esc(v.identification)}" placeholder="e.g. Compressors, GCS 4, Refrigerant, Liquid" required></div>
+      <div class="field"><label for="f-source">Source</label><input type="text" id="f-source" value="${esc(v.source)}"></div>
+      <div class="field"><label for="f-lto">LTO #</label><input type="text" id="f-lto" value="${esc(v.lto)}"></div>
+    </div></section>
+    <section class="panel"><h2>Requester</h2><div class="form">
+      <div class="field"><label for="f-req">Requested by</label><input type="text" id="f-req" value="${esc(v.requestedBy)}"></div>
+      <div class="field"><label for="f-email">Requester email</label><input type="email" id="f-email" value="${esc(v.requestedEmail)}"></div>
+      <div class="field"><label for="f-cc">CC emails</label><input type="text" id="f-cc" value="${esc(v.cc)}" placeholder="Separate with ;"></div>
+      <div class="field wide"><label for="f-comments">Comments</label><textarea id="f-comments" rows="3">${esc(v.comments)}</textarea></div>
+    </div></section>
+    ${editing ? "" : `<section class="panel"><h2>Tests requested</h2>
+      ${GROUPS.map(([g, label]) => { const ms = methods.filter((m) => m.group === g); return ms.length ? `<h3>${label}</h3><div class="checks">${ms.map((m) => `<label><input type="checkbox" id="t-${esc(m.id)}" data-test="${esc(m.id)}"> ${esc(m.name)}${m.code ? ` <span class="muted small">(${esc(m.code)})</span>` : ""}</label>`).join("")}</div>` : ""; }).join("")}
+      <p class="hint">${S.methods.filter((m) => m.everySample).map((m) => esc(m.name)).join(", ") || "Results Reported"} is added to every sample automatically.</p>
+    </section>`}
+    <p class="err" id="formErr" role="alert"></p>
+    <div class="row">
+      <button class="btn" type="submit" data-write>${editing ? "Save changes" : "Log sample"}</button>
+      ${editing ? "" : `<button class="btn ghost" type="submit" data-write data-another="1">Log and add another</button>`}
+      <a href="${editing ? "#sample-" + esc(s.id) : "#log"}">Cancel</a>
+    </div>
+  </form></div>`;
+}
+
+async function submitSample(form, another) {
+  const editing = route().startsWith("edit-") ? sampleById(route().slice(5)) : null;
+  const val = (id) => $("#" + id).value.trim();
+  const err = $("#formErr");
+  const data = {
+    type: val("f-type"), phase: val("f-phase"), blendId: val("f-blend"), identification: val("f-ident"), source: val("f-source"),
+    lto: val("f-lto"), requestedBy: val("f-req"), requestedEmail: val("f-email"), cc: val("f-cc"), comments: $("#f-comments").value.trim(),
+  };
+  if (!data.identification) { err.textContent = "Enter the sample identification."; $("#f-ident").focus(); return; }
+  if (editing) {
+    if (await write(() => S.db.doc("samples/" + editing.id).update(data), "Sample updated.")) go("sample-" + editing.id);
+    return;
+  }
+  const received = val("f-received");
+  if (!received) { err.textContent = "Enter the received date."; return; }
+  const chosen = $$("[data-test]", form).filter((c) => c.checked).map((c) => c.dataset.test);
+  if (chosen.some((id) => methodById(id)?.type === "blend") && !data.blendId) { err.textContent = "Choose the blend for blend analysis."; $("#f-blend").focus(); return; }
+  const tests = {};
+  for (const id of [...chosen, ...S.methods.filter((m) => m.everySample && m.active !== false).map((m) => m.id)]) tests[id] = { status: "requested" };
+  $$("button", form).forEach((b) => { b.disabled = true; });
+  err.textContent = "";
+  let number;
+  const ok = await write(async () => {
+    const jul = julian(received);
+    const seq = await nextSequence(jul);
+    number = `${jul}-${seq}`;
+    await S.db.doc("samples/" + number).set({ ...data, number, julian: jul, seq, receivedOn: received, receivedBy: S.uid, createdAt: new Date().toISOString(), tests });
+  });
+  $$("button", form).forEach((b) => { b.disabled = false; });
+  if (!ok) return;
+  toast(`Sample ${number} logged.`);
+  if (another) { $$("#main [data-dirty]").forEach((el) => delete el.dataset.dirty); render(); } else go("sample-" + number);
+}
+
+/* ---------- Sample page ---------- */
+function notFound(what) { return `<div class="narrow"><div class="panel empty"><h2>This ${what} doesn't exist</h2><p>It may have been deleted. <a href="#log">Back to the sample log</a></p></div></div>`; }
+
+function sampleView(s) {
+  if (!s) return notFound("sample");
+  const tests = sampleTests(s);
+  const blend = blendById(s.blendId);
+  const cal = blend ? activeCal(blend.id) : null;
+  const related = s.lto ? S.samples.filter((x) => x.lto === s.lto && x.id !== s.id) : [];
+  const reports = S.reports.filter((r) => (r.sampleIds || []).includes(s.id));
+  const addable = orderedMethods(S.methods.filter((m) => m.active !== false && !(s.tests || {})[m.id]));
+  const isConfirm = ui.confirm === "delete-" + s.id;
+
+  const cards = tests.map(({ method: m, t }) => {
+    const key = s.id + ":" + m.id;
+    const closedByDefault = t.status === "completed" || t.status === "cancelled";
+    const collapsed = m.type === "tracking" || (key in ui.expanded ? !ui.expanded[key] : closedByDefault);
+    const results = t.results || [];
+    const resTable = results.length ? `<div class="scroll"><table class="data"><tr><th>Result</th><th>Value</th><th>Entered</th><th>Based on</th></tr>
+      ${results.map((r, i) => `<tr><td>${esc(r.label || m.name)}</td><td class="num"><b class="mono">${esc(displayValue(r))}</b> ${esc(r.unit || "")}</td><td class="muted small">${i === 0 ? `${esc(personName(t.by))}, ${fmtStamp(t.at)}` : ""}</td><td class="small">${i === 0 ? basedOn(t) : ""}</td></tr>`).join("")}
+    </table></div>` : "";
+    return `<section class="test ${collapsed ? "collapsed" : ""}" id="test-${esc(m.id)}">
+      <header>
+        <h3>${esc(m.name)} ${m.code ? `<span class="code">${esc(m.code)}</span>` : ""}</h3>
+        ${results.length && collapsed ? `<span class="mono small">${results.map((r) => `${esc(r.label ? r.label + " " : "")}${esc(displayValue(r))} ${esc(r.unit || "")}`).join(" · ")}</span>` : ""}
+        <span class="pill ${t.status}">${esc(STATUS[t.status])}${t.status === "completed" ? " · " + esc(initials(t.by)) : ""}</span>
+        <select id="st-${esc(m.id)}" data-status="${esc(m.id)}" aria-label="${esc(m.name)} status" data-write>
+          ${Object.entries(STATUS).map(([k, l]) => `<option value="${k}" ${k === t.status ? "selected" : ""}>${l}</option>`).join("")}
+        </select>
+        ${m.type !== "tracking" && t.status !== "cancelled" ? `<button class="btn ghost sm" data-toggle="${esc(key)}">${collapsed ? (results.length ? "Edit results" : "Enter results") : "Hide"}</button>` : ""}
+      </header>
+      ${m.type === "tracking" ? "" : `<div class="body">${resTable}${entryForm(s, m, t, blend, cal)}</div>`}
+    </section>`;
+  }).join("");
+
+  return `<div class="narrow">
+  <div class="head"><a class="crumb" href="#log">← Sample log</a></div>
+  <div class="head"><h1><span class="mono">${esc(s.number)}</span> <span class="muted" style="font-weight:400">${esc(s.identification)}</span></h1></div>
+  ${usesPlaceholder(s) ? `<div class="banner">Some results on this sample use <b>placeholder formulas</b>. Reports will be marked DRAFT until the real formulas are entered under <a href="#formulas">Formulas</a>.</div>` : ""}
+  <div class="cols">
+    <div class="list">${cards || `<div class="panel empty">No tests on this sample yet.</div>`}
+      ${addable.length ? `<div class="panel"><div class="row"><label class="label" for="addTest">Add a test</label>
+        <select id="addTest">${addable.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("")}</select>
+        <button class="btn ghost sm" data-addtest="${esc(s.id)}" data-write>Add</button></div></div>` : ""}
+    </div>
+    <div class="list">
+      <section class="panel">
+        <div class="head"><h2>Details</h2><span class="spacer"></span><a class="small" href="#edit-${esc(s.id)}">Edit</a></div>
+        <dl class="info">
+          <dt>Received</dt><dd>${fmtDate(s.receivedOn)} <span class="muted">(Julian ${esc(s.julian)})</span></dd>
+          <dt>Type</dt><dd>${esc({ refrigerant: "Refrigerant", oil: "Oil", other: "Other" }[s.type] || s.type)}${s.phase ? ", " + esc(s.phase) : ""}</dd>
+          ${blend ? `<dt>Blend</dt><dd>${esc(blend.name)}</dd>` : ""}
+          <dt>LTO #</dt><dd>${esc(s.lto || "—")}</dd>
+          <dt>Source</dt><dd>${esc(s.source || "—")}</dd>
+          <dt>Requested by</dt><dd>${esc(s.requestedBy || "—")}${s.requestedEmail ? `<br><span class="muted small">${esc(s.requestedEmail)}</span>` : ""}</dd>
+          ${s.cc ? `<dt>CC</dt><dd>${esc(s.cc)}</dd>` : ""}
+          <dt>Logged by</dt><dd>${esc(personName(s.receivedBy))}</dd>
+          ${s.comments ? `<dt>Comments</dt><dd>${esc(s.comments)}</dd>` : ""}
+        </dl>
+      </section>
+      <section class="panel">
+        <h2>Report</h2>
+        ${reports.map((r) => `<div class="row"><a href="#report-${esc(r.id)}" class="mono">${esc(r.number)}</a><span class="pill ${r.status === "sent" ? "good" : "plain"}">${r.status === "sent" ? "Sent" : "Draft"}</span></div>`).join("")}
+        ${related.length ? `<p class="hint">Include other samples with LTO ${esc(s.lto)}:</p>${related.map((x) => `<label class="small" style="display:flex;gap:8px;align-items:baseline"><input type="checkbox" id="rel-${esc(x.id)}" data-rel="${esc(x.id)}"><span><span class="mono">${esc(x.number)}</span> ${esc(x.identification.slice(0, 40))}</span></label>`).join("")}` : ""}
+        <div><button class="btn" data-newreport="${esc(s.id)}" data-write>${reports.length ? "Create another report" : "Create report"}</button></div>
+      </section>
+      <section class="panel">
+        ${isConfirm ? `<p>Delete sample ${esc(s.number)} and its results? This can't be undone.</p><div class="row"><button class="btn danger" data-delsample="${esc(s.id)}" data-write>Delete sample</button><button class="btn ghost" data-cancelconfirm>Keep it</button></div>`
+        : `<div><button class="btn ghost sm" data-askdelete="${esc(s.id)}" data-write>Delete sample…</button></div>`}
+      </section>
+    </div>
+  </div></div>`;
+}
+
+function basedOn(t) {
+  const parts = [];
+  if (t.formulaId) { const f = formulaById(t.formulaId); parts.push(`Formula v${esc(t.formulaVersion)}${f && f.placeholder ? ` <span class="pill warn">placeholder</span>` : ""}`); }
+  if (t.calibrationId) { const c = calById(t.calibrationId); parts.push(c ? `<a href="#calibration-${esc(c.id)}">Calibration ${fmtDate(c.on)}</a>` : "Calibration"); }
+  return parts.join(" ");
+}
+
+function entryForm(s, m, t, blend, cal) {
+  const key = esc(m.id);
+  const prev = t.inputs || {};
+  if (m.type === "formula") {
+    const f = currentFormula(m.id);
+    if (!f) return `<p class="muted">No formula is set up for this test. <a href="#formula-${key}">Add one</a>.</p>`;
+    return `${f.placeholder ? `<div class="banner">This is a <b>placeholder formula</b> that hasn't been confirmed by the lab. <a href="#formula-${key}">Enter the real formula</a>.</div>` : ""}
+    <form data-result="${key}" data-kind="formula" data-formula="${esc(f.id)}">
+      <div class="inputs">${f.inputs.map((inp) => `<div class="field"><label for="in-${key}-${esc(inp.name)}">${esc(inp.label)}${inp.unit ? ` (${esc(inp.unit)})` : ""}</label>
+        <input type="text" inputmode="decimal" id="in-${key}-${esc(inp.name)}" data-input="${esc(inp.name)}" data-live value="${esc(prev[inp.name] ?? "")}" autocomplete="off"></div>`).join("")}
+        <button class="btn" type="submit" data-write>Save result</button></div>
+      <div class="expr">= ${esc(f.expression)} · v${f.version}</div>
+      <div class="out" aria-live="polite"></div>
+    </form>`;
+  }
+  if (m.type === "blend") {
+    if (!blend) return `<p class="muted">Set the sample's blend (<a href="#edit-${esc(s.id)}">edit sample</a>) to enter blend analysis data.</p>`;
+    if (!cal) return `<div class="banner bad">There is no current, verified calibration for ${esc(blend.name)}, so blend results can't be calculated. <a href="#calibrate">Calibrate ${esc(blend.name)}</a></div>`;
+    return `<p class="small muted">Using the ${esc(blend.name)} calibration from <a href="#calibration-${esc(cal.id)}">${fmtDate(cal.on)}</a>, expires ${fmtDate(cal.expires)}.</p>
+    <form data-result="${key}" data-kind="blend" data-cal="${esc(cal.id)}">
+      <div class="scroll"><table class="data"><tr><th>Component</th><th>Response factor</th><th>Sample peak area</th><th>Result</th></tr>
+      ${cal.components.map((c, i) => `<tr><td>${esc(c.name)}</td><td class="num mono">${compRF(c).rf.toPrecision(6)}</td>
+        <td><input type="text" inputmode="decimal" id="area-${key}-${i}" data-area="${esc(c.name)}" data-live aria-label="${esc(c.name)} peak area" value="${esc(prev[c.name] ?? "")}" autocomplete="off"></td>
+        <td class="num mono" data-pct="${esc(c.name)}"></td></tr>`).join("")}
+      <tr><td colspan="3" class="num muted">Total</td><td class="num mono" data-total></td></tr></table></div>
+      <div class="out err" aria-live="polite"></div>
+      <div><button class="btn" type="submit" data-write>Save results</button></div>
+    </form>`;
+  }
+  if (m.type === "manual") {
+    const r = (t.results || [])[0];
+    return `<form data-result="${key}" data-kind="manual" class="inputs">
+      <div class="field"><label for="mv-${key}">Result</label><input type="text" id="mv-${key}" value="${esc(r ? displayValue(r) : "")}" autocomplete="off"></div>
+      <div class="field"><label for="mu-${key}">Unit</label><input type="text" id="mu-${key}" value="${esc(r ? r.unit : m.unit || "")}" style="width:7em"></div>
+      <button class="btn" type="submit" data-write>Save result</button>
+      <div class="out err" aria-live="polite" style="flex-basis:100%"></div>
+    </form>`;
+  }
+  return "";
+}
+
+function computeResult(form) {
+  const kind = form.dataset.kind;
+  if (kind === "formula") {
+    const f = formulaById(form.dataset.formula);
+    const raw = {};
+    $$("[data-input]", form).forEach((el) => { raw[el.dataset.input] = el.value; });
+    const { value, inputs } = runFormula(f, raw);
+    return { results: [{ label: "", value, unit: f.unit || "", decimals: f.decimals ?? 2 }], inputs, formulaId: f.id, formulaVersion: f.version, calibrationId: null };
+  }
+  if (kind === "blend") {
+    const cal = calById(form.dataset.cal);
+    const inputs = {};
+    const results = cal.components.map((c, i) => {
+      const el = $$("[data-area]", form).find((x) => x.dataset.area === c.name);
+      const s = el.value.trim();
+      if (s === "" || !isFinite(Number(s))) throw new Error(`Enter the peak area for ${c.name}.`);
+      inputs[c.name] = Number(s);
+      return { label: c.name, value: Number(s) * compRF(c).rf, unit: "%", decimals: 2 };
+    });
+    return { results, inputs, formulaId: null, formulaVersion: null, calibrationId: cal.id };
+  }
+  const raw = $("[id^=mv-]", form).value.trim();
+  if (!raw) throw new Error("Enter a result.");
+  const unit = $("[id^=mu-]", form).value.trim();
+  const isNum = raw !== "" && isFinite(Number(raw));
+  const decimals = isNum && raw.includes(".") ? raw.split(".")[1].length : 0;
+  return { results: [isNum ? { label: "", value: Number(raw), unit, decimals } : { label: "", value: null, text: raw, unit, decimals: 0 }], inputs: {}, formulaId: null, formulaVersion: null, calibrationId: null };
+}
+
+function livePreview(form) {
+  const out = $(".out", form);
+  const kind = form.dataset.kind;
+  if (kind === "blend") {
+    const cal = calById(form.dataset.cal);
+    let total = 0, all = true;
+    cal.components.forEach((c) => {
+      const el = $$("[data-area]", form).find((x) => x.dataset.area === c.name);
+      const cell = $$("[data-pct]", form).find((x) => x.dataset.pct === c.name);
+      const s = el.value.trim();
+      if (s !== "" && isFinite(Number(s))) { const p = Number(s) * compRF(c).rf; total += p; cell.textContent = p.toFixed(2) + " %"; }
+      else { all = false; cell.textContent = ""; }
+    });
+    $("[data-total]", form).textContent = all ? total.toFixed(2) + " %" : "";
+    out.textContent = "";
+    return;
+  }
+  if (kind === "formula") {
+    const filled = $$("[data-input]", form).every((el) => el.value.trim() !== "");
+    if (!filled) { out.textContent = ""; out.classList.remove("err"); return; }
+    try {
+      const r = computeResult(form).results[0];
+      out.classList.remove("err");
+      out.innerHTML = `= <b>${esc(Number(r.value).toFixed(r.decimals))}</b> ${esc(r.unit)}`;
+    } catch (e) { out.classList.add("err"); out.textContent = e.message; }
+  }
+}
+
+async function saveResult(sample, methodId, form) {
+  let c;
+  try { c = computeResult(form); } catch (e) { const out = $(".out", form); out.classList.add("err"); out.textContent = e.message; return; }
+  const patch = { tests: { [methodId]: { status: "completed", by: S.uid, at: new Date().toISOString(), results: c.results, inputs: c.inputs, formulaId: c.formulaId, formulaVersion: c.formulaVersion, calibrationId: c.calibrationId } } };
+  if (await write(() => S.db.doc("samples/" + sample.id).update(patch), `${methodById(methodId).name} saved.`)) {
+    ui.expanded[sample.id + ":" + methodId] = false;
+    $$("[data-dirty]", form).forEach((el) => delete el.dataset.dirty);
+  }
+}
+
+/* ---------- Reports ---------- */
+function reportsView() {
+  const list = [...S.reports].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  return `<div class="narrow"><h1>Reports</h1>
+  <div class="panel">${list.length ? `<div class="scroll"><table class="data"><tr><th>Report #</th><th>Samples</th><th>Status</th><th>Created</th><th>Sent</th></tr>
+    ${list.map((r) => `<tr><td><a class="mono" href="#report-${esc(r.id)}">${esc(r.number)}</a></td><td class="mono small">${(r.sampleIds || []).map(esc).join(", ")}</td>
+    <td><span class="pill ${r.status === "sent" ? "good" : "plain"}">${r.status === "sent" ? "Sent" : "Draft"}</span></td>
+    <td class="small">${fmtStamp(r.createdAt)} · ${esc(personName(r.createdBy))}</td><td class="small">${r.sentAt ? fmtStamp(r.sentAt) : "—"}</td></tr>`).join("")}</table></div>`
+  : `<p class="empty">No reports yet. Open a sample and choose Create report.</p>`}</div></div>`;
+}
+
+function reportSamples(r) { return (r.sampleIds || []).map(sampleById).filter(Boolean).sort((a, b) => a.julian.localeCompare(b.julian) || a.seq - b.seq); }
+
+function emailParts(r) {
+  const nums = reportSamples(r).map((s) => s.number).join(", ");
+  const subject = `Analysis report ${r.number} – Sample ${nums}`;
+  let body = `Hello,\n\nPlease find attached the analysis report for sample(s) ${nums}.\n\nLet us know if you have any questions.`;
+  if (S.settings.signature) body += "\n\n" + S.settings.signature;
+  return { to: r.to || "", cc: r.cc || "", subject, body };
+}
+
+function reportView(r) {
+  if (!r) return notFound("report");
+  const samples = reportSamples(r);
+  const open = samples.flatMap((s) => sampleTests(s).filter(({ method: m, t }) => m.type !== "tracking" && OPEN.has(t.status)).map(({ method: m }) => ({ s, m })));
+  const placeholder = samples.some(usesPlaceholder);
+  const mail = emailParts(r);
+  const mailto = `mailto:${encodeURIComponent(mail.to.replace(/\s*;\s*/g, ","))}?cc=${encodeURIComponent(mail.cc.replace(/\s*;\s*/g, ","))}&subject=${encodeURIComponent(mail.subject)}&body=${encodeURIComponent(mail.body)}`;
+  return `<div class="narrow">
+  <div class="head"><a class="crumb" href="#reports">← Reports</a></div>
+  <div class="head"><h1>Report <span class="mono">${esc(r.number)}</span></h1><span class="pill ${r.status === "sent" ? "good" : "plain"}">${r.status === "sent" ? "Sent" : "Draft"}</span></div>
+  ${placeholder ? `<div class="banner">Some results use <b>placeholder formulas</b>, so the PDF will be marked DRAFT.</div>` : ""}
+  ${open.length ? `<div class="banner">Still in process: ${open.map(({ s, m }) => `<a href="#sample-${esc(s.id)}">${esc(s.number)} ${esc(m.name)}</a>`).join(", ")}</div>` : ""}
+  <div class="cols">
+    <div class="list">${samples.map((s) => `<section class="panel">
+      <h2><a class="mono" href="#sample-${esc(s.id)}">${esc(s.number)}</a> ${esc(s.identification)}</h2>
+      <p class="small muted">LTO ${esc(s.lto || "—")} · received ${fmtDate(s.receivedOn)}</p>
+      <div class="scroll"><table class="data"><tr><th>Test</th><th>Method</th><th>Result</th><th>Analyst</th></tr>
+      ${sampleTests(s).filter(({ method: m, t }) => m.type !== "tracking" && t.status !== "cancelled").map(({ method: m, t }) => (t.results && t.results.length ? t.results : [null]).map((res, i) =>
+        `<tr><td>${i === 0 ? esc(m.name) : ""}${res && res.label ? (i === 0 ? " – " : "") + esc(res.label) : ""}</td><td class="mono small">${i === 0 ? esc(m.code || "") : ""}</td>
+        <td class="num">${res ? `<b class="mono">${esc(displayValue(res))}</b> ${esc(res.unit || "")}` : `<span class="muted">${esc(STATUS[t.status])}</span>`}</td><td>${i === 0 && t.status === "completed" ? esc(initials(t.by)) : ""}</td></tr>`).join("")).join("")}
+      </table></div></section>`).join("")}</div>
+    <div class="list">
+      <section class="panel"><h2>1. Email details</h2>
+        <div class="field"><label for="r-to">To</label><input type="text" id="r-to" value="${esc(r.to)}" placeholder="Separate with ;"></div>
+        <div class="field"><label for="r-cc">CC</label><input type="text" id="r-cc" value="${esc(r.cc)}"></div>
+        <div class="field"><label for="r-notes">Notes printed on the report</label><textarea id="r-notes" rows="3">${esc(r.notes)}</textarea></div>
+        <div><button class="btn ghost" data-savereport="${esc(r.id)}" data-write>Save details</button></div>
+      </section>
+      <section class="panel"><h2>2. Save the PDF</h2>
+        <p class="small muted">Downloads ${esc(r.number)}.pdf. Save it to the reports folder on the network drive.</p>
+        <div><button class="btn" data-pdf="${esc(r.id)}">Download PDF</button></div>
+      </section>
+      <section class="panel"><h2>3. Email it</h2>
+        <p class="small muted">Copy each part into a new Outlook email and attach the PDF.</p>
+        ${[["To", mail.to], ["CC", mail.cc], ["Subject", mail.subject]].map(([l, v], i) => `<div class="field"><span class="label">${l}</span><div class="row"><input type="text" readonly id="mail-${i}" value="${esc(v)}" style="flex:1"><button class="btn ghost sm" data-copy="mail-${i}">Copy</button></div></div>`).join("")}
+        <div class="field"><span class="label">Message</span><textarea readonly id="mail-3" rows="6">${esc(mail.body)}</textarea><div><button class="btn ghost sm" data-copy="mail-3">Copy message</button></div></div>
+        <p class="small"><a href="${esc(mailto)}" target="_blank" rel="noopener">Open a new email</a> <span class="muted">(fills in everything except the attachment; may not work in every browser)</span></p>
+      </section>
+      <section class="panel"><h2>4. Mark as sent</h2>
+        ${r.status === "sent" ? `<p>Sent by ${esc(personName(r.sentBy))} on ${fmtStamp(r.sentAt)}.</p>`
+        : `<div><button class="btn" data-sent="${esc(r.id)}" data-write>I've sent the email</button></div><p class="hint">Marks Results Reported complete in the sample log.</p>`}
+      </section>
+    </div>
+  </div></div>`;
+}
+
+async function createReport(sample) {
+  const extra = $$("[data-rel]").filter((c) => c.checked).map((c) => c.dataset.rel);
+  const ids = [sample.id, ...extra];
+  const first = ids.map(sampleById).sort((a, b) => a.julian.localeCompare(b.julian) || a.seq - b.seq)[0];
+  let number = "R" + first.number, n = 1;
+  while (S.reports.some((r) => r.number === number)) number = `R${first.number}-${++n}`;
+  const id = "rep-" + uid36();
+  if (await write(() => S.db.doc("reports/" + id).set({ number, sampleIds: ids, to: sample.requestedEmail || "", cc: sample.cc || "", notes: "", status: "draft", createdBy: S.uid, createdAt: new Date().toISOString() }), `Report ${number} created.`)) go("report-" + id);
+}
+
+async function markSent(r) {
+  const at = new Date().toISOString();
+  const ok = await write(async () => {
+    await S.db.doc("reports/" + r.id).update({ status: "sent", sentBy: S.uid, sentAt: at });
+    for (const s of reportSamples(r)) {
+      if ((s.tests || {})[RESULTS_REPORTED]) await S.db.doc("samples/" + s.id).update({ tests: { [RESULTS_REPORTED]: { status: "completed", by: S.uid, at } } });
+    }
+  }, "Report marked as sent. The sample log is updated.");
+  return ok;
+}
+
+async function downloadPdf(r) {
+  if (!window.jspdf) { toast("The PDF tool didn't load. Reload the page and try again."); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: "pt", format: "letter" });
+  const L = 54;
+  let y = 60;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.text(S.settings.labName || "Analytical Laboratory", L, y); y += 22;
+  doc.setFontSize(13); doc.text("Analysis Report", L, y); y += 16;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.text(`Report #: ${r.number}     Date: ${fmtDate(today())}`, L, y); y += 14;
+  const samples = reportSamples(r);
+  if (samples.some(usesPlaceholder)) { doc.setTextColor(180, 0, 0); doc.setFont("helvetica", "bold"); doc.text("DRAFT – contains results from placeholder formulas not yet confirmed by the lab.", L, y); doc.setTextColor(0); doc.setFont("helvetica", "normal"); y += 14; }
+  y += 6;
+  for (const s of samples) {
+    const blend = blendById(s.blendId);
+    doc.autoTable({
+      startY: y, margin: { left: L, right: L }, theme: "grid", styles: { fontSize: 9, cellPadding: 4 }, columnStyles: { 0: { fontStyle: "bold", cellWidth: 90 }, 2: { fontStyle: "bold", cellWidth: 60 } },
+      body: [["Sample #", s.number, "Received", fmtDate(s.receivedOn)], ["Identification", s.identification, "LTO #", s.lto || "—"], ...(blend ? [["Blend", blend.name, "Phase", s.phase || "—"]] : [])],
+    });
+    y = doc.lastAutoTable.finalY + 6;
+    const rows = [];
+    const notes = [];
+    for (const { method: m, t } of sampleTests(s)) {
+      if (m.type === "tracking" || t.status !== "completed" || !(t.results || []).length) continue;
+      t.results.forEach((res, i) => rows.push([i === 0 ? m.name + (res.label ? " – " + res.label : "") : "    " + res.label, i === 0 ? m.code || "" : "", displayValue(res), res.unit || "", i === 0 ? initials(t.by) : ""]));
+      if (t.calibrationId) { const c = calById(t.calibrationId); if (c) notes.push(`${m.name}: calibration of ${blendById(c.blendId)?.name || ""} on ${fmtDate(c.on)} (standard ${c.cylinder}).`); }
+    }
+    doc.autoTable({ startY: y, margin: { left: L, right: L }, theme: "grid", styles: { fontSize: 9, cellPadding: 4 }, headStyles: { fillColor: [220, 236, 236], textColor: 20 },
+      head: [["Test", "Method", "Result", "Unit", "Analyst"]], body: rows.length ? rows : [["No completed results.", "", "", "", ""]], columnStyles: { 2: { halign: "right" } } });
+    y = doc.lastAutoTable.finalY + 4;
+    doc.setFontSize(8);
+    for (const n of [...notes, ...(s.comments ? ["Comments: " + s.comments] : [])]) { const lines = doc.splitTextToSize(n, 504); doc.text(lines, L, y + 8); y += 10 * lines.length; }
+    doc.setFontSize(10);
+    y += 20;
+    if (y > 680) { doc.addPage(); y = 60; }
+  }
+  if (r.notes) { const lines = doc.splitTextToSize("Notes: " + r.notes, 504); doc.text(lines, L, y); }
+  const blob = doc.output("blob");
+  const dl = await window.claude?.use("downloads");
+  if (!dl) { toast("Downloads aren't available in this view. Open the page in claude.ai."); return; }
+  try { await dl.save({ filename: `${r.number}.pdf`, data: blob }); toast(`${r.number}.pdf saved.`); }
+  catch (e) { if (e.code !== "declined") toast(e.code === "rate_limited" ? "A download prompt is already open." : "The PDF could not be saved."); }
+}
+
+/* ---------- Calibrations ---------- */
+function calsView() {
+  const archive = ui.calArchive;
+  const blendFilter = ui.calBlend || "";
+  let list = S.cals.filter((c) => (archive ? calStatus(c) === "expired" : calStatus(c) !== "expired"));
+  if (blendFilter) list = list.filter((c) => c.blendId === blendFilter);
+  list.sort((a, b) => b.on.localeCompare(a.on));
+  return `<div class="narrow">
+  <div class="head"><h1>Calibrations</h1><span class="spacer"></span><a class="btn" href="#calibrate">+ New calibration</a></div>
+  <section class="panel"><h2>Current status by blend</h2>
+    ${S.blends.length ? `<div class="scroll"><table class="data"><tr><th>Blend</th><th>Active calibration</th><th>Expires</th></tr>
+    ${S.blends.filter((b) => b.active !== false).map((b) => { const c = activeCal(b.id); return `<tr><td>${esc(b.name)}</td>${c ? `<td><a href="#calibration-${esc(c.id)}">${fmtDate(c.on)}</a> · ${esc(personName(c.by))}</td><td>${fmtDate(c.expires)} <span class="muted small">(${daysUntil(c.expires)} days)</span></td>` : `<td colspan="2"><span class="pill bad">No verified calibration</span></td>`}</tr>`; }).join("")}
+    </table></div>` : `<p class="muted">No blends yet. Add them under <a href="#setup">Setup</a>.</p>`}
+  </section>
+  <section class="panel">
+    <div class="row">
+      <button class="btn sm ${archive ? "ghost" : ""}" data-calview="current">Current</button>
+      <button class="btn sm ${archive ? "" : "ghost"}" data-calview="archive">Archive (expired)</button>
+      <select id="calBlend" aria-label="Filter by blend"><option value="">All blends</option>${S.blends.map((b) => `<option value="${esc(b.id)}" ${b.id === blendFilter ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select>
+    </div>
+    ${list.length ? `<div class="scroll"><table class="data"><tr><th>Blend</th><th>Calibrated</th><th>By</th><th>Standard cylinder</th><th>Expires</th><th>Status</th></tr>
+    ${list.map((c) => { const [l, cls] = CAL_LABEL[calStatus(c)]; return `<tr><td><a href="#calibration-${esc(c.id)}">${esc(blendById(c.blendId)?.name || "?")}</a></td><td>${fmtDate(c.on)}</td><td>${esc(personName(c.by))}</td><td class="mono">${esc(c.cylinder)}</td><td>${fmtDate(c.expires)}</td><td><span class="pill ${cls}">${l}</span></td></tr>`; }).join("")}
+    </table></div>` : `<p class="empty">${archive ? "No expired calibrations." : "No current calibrations."}</p>`}
+  </section></div>`;
+}
+
+function calForm() {
+  const blends = S.blends.filter((b) => b.active !== false && (b.components || []).length);
+  if (!blends.length) return `<div class="narrow"><div class="panel empty"><h2>Add a blend first</h2><p>Blends and their components are set up under <a href="#setup">Setup</a>.</p></div></div>`;
+  const chosen = blendById(ui.calFormBlend) || blends[0];
+  return `<div class="narrow">
+  <div class="head"><a class="crumb" href="#calibrations">← Calibrations</a></div>
+  <h1>New calibration</h1>
+  <form id="calForm" class="narrow" novalidate>
+    <section class="panel"><div class="form">
+      <div class="field"><label for="c-blend">Blend</label><select id="c-blend">${blends.map((b) => `<option value="${esc(b.id)}" ${b.id === chosen.id ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select></div>
+      <div class="field"><label for="c-cyl">Standard cylinder ID</label><input type="text" id="c-cyl" placeholder="From the inventory system"></div>
+      <div class="field"><label for="c-on">Calibration date</label><input type="date" id="c-on" value="${today()}"></div>
+      <div class="field wide"><label for="c-notes">Notes</label><textarea id="c-notes" rows="2"></textarea></div>
+    </div></section>
+    <section class="panel"><h2>Peak areas from the three GC runs</h2>
+      <p class="small muted">Response factor = standard % ÷ mean peak area. It's used to turn sample peak areas into %.</p>
+      <div class="scroll"><table class="data"><tr><th>Component</th><th>Standard %</th><th>Run 1</th><th>Run 2</th><th>Run 3</th><th>Response factor</th></tr>
+      ${chosen.components.map((c, i) => `<tr><td>${esc(c.name)}</td>
+        <td><input type="text" inputmode="decimal" id="c-std-${i}" value="${esc(c.nominal)}" data-live aria-label="${esc(c.name)} standard %"></td>
+        ${[1, 2, 3].map((k) => `<td><input type="text" inputmode="decimal" id="c-a${k}-${i}" data-live aria-label="${esc(c.name)} run ${k} area"></td>`).join("")}
+        <td class="num mono" id="c-rf-${i}"></td></tr>`).join("")}
+      </table></div>
+    </section>
+    <p class="err" id="formErr" role="alert"></p>
+    <div class="row"><button class="btn" type="submit" data-write>Save calibration</button><a href="#calibrations">Cancel</a></div>
+  </form></div>`;
+}
+
+function calFormLive() {
+  const b = blendById($("#c-blend").value);
+  b.components.forEach((c, i) => {
+    const v = [$(`#c-std-${i}`), $(`#c-a1-${i}`), $(`#c-a2-${i}`), $(`#c-a3-${i}`)].map((el) => el.value.trim());
+    const ok = v.every((x) => x !== "" && isFinite(Number(x)));
+    const rf = ok ? compRF({ std: v[0], a1: v[1], a2: v[2], a3: v[3] }).rf : null;
+    $(`#c-rf-${i}`).textContent = ok && isFinite(rf) ? rf.toPrecision(6) : "";
+  });
+}
+
+async function submitCal() {
+  const b = blendById($("#c-blend").value);
+  const err = $("#formErr");
+  const cyl = $("#c-cyl").value.trim(), on = $("#c-on").value;
+  if (!cyl) { err.textContent = "Enter the standard cylinder ID."; return; }
+  if (!on) { err.textContent = "Enter the calibration date."; return; }
+  const components = [];
+  for (let i = 0; i < b.components.length; i++) {
+    const v = [$(`#c-std-${i}`), $(`#c-a1-${i}`), $(`#c-a2-${i}`), $(`#c-a3-${i}`)].map((el) => el.value.trim());
+    if (!v.every((x) => x !== "" && isFinite(Number(x)))) { err.textContent = `Fill in every value for ${b.components[i].name}.`; return; }
+    if (Number(v[1]) + Number(v[2]) + Number(v[3]) <= 0) { err.textContent = `Peak areas for ${b.components[i].name} can't all be zero.`; return; }
+    components.push({ name: b.components[i].name, std: Number(v[0]), a1: Number(v[1]), a2: Number(v[2]), a3: Number(v[3]) });
+  }
+  const id = "cal-" + uid36();
+  const months = Number(S.settings.validMonths) || 6;
+  if (await write(() => S.db.doc("calibrations/" + id).set({ blendId: b.id, cylinder: cyl, on, expires: addMonths(on, months), by: S.uid, notes: $("#c-notes").value.trim(), components, verifications: [], createdAt: new Date().toISOString() }), "Calibration saved. Run the verification next.")) go("calibration-" + id);
+}
+
+function calView(c) {
+  if (!c) return notFound("calibration");
+  const b = blendById(c.blendId);
+  const st = calStatus(c);
+  const [label, cls] = CAL_LABEL[st];
+  const used = S.samples.filter((s) => Object.values(s.tests || {}).some((t) => t.calibrationId === c.id));
+  return `<div class="narrow">
+  <div class="head"><a class="crumb" href="#calibrations">← Calibrations</a></div>
+  <div class="head"><h1>${esc(b?.name || "?")} calibration · ${fmtDate(c.on)}</h1><span class="pill ${cls}">${label}</span></div>
+  ${st === "unverified" ? `<div class="banner">This calibration can't be used until a verification passes. <a href="#verify-${esc(c.id)}">Run verification</a></div>` : ""}
+  ${st === "failed" ? `<div class="banner bad">The latest verification failed. Run another verification or recalibrate.</div>` : ""}
+  <section class="panel"><dl class="info">
+    <dt>Calibrated by</dt><dd>${esc(personName(c.by))}</dd><dt>Standard cylinder</dt><dd class="mono">${esc(c.cylinder)}</dd>
+    <dt>Expires</dt><dd>${fmtDate(c.expires)}</dd>${c.notes ? `<dt>Notes</dt><dd>${esc(c.notes)}</dd>` : ""}
+  </dl></section>
+  <section class="panel"><h2>Calibration runs</h2><div class="scroll"><table class="data">
+    <tr><th>Component</th><th>Standard %</th><th>Run 1</th><th>Run 2</th><th>Run 3</th><th>Mean area</th><th>Response factor</th></tr>
+    ${c.components.map((x) => { const r = compRF(x); return `<tr><td>${esc(x.name)}</td><td class="num mono">${fixed(x.std, 4)}</td><td class="num mono">${fixed(x.a1, 2)}</td><td class="num mono">${fixed(x.a2, 2)}</td><td class="num mono">${fixed(x.a3, 2)}</td><td class="num mono">${fixed(r.mean, 2)}</td><td class="num mono">${r.rf.toPrecision(6)}</td></tr>`; }).join("")}
+  </table></div></section>
+  <section class="panel">
+    <div class="head"><h2>Verifications</h2><span class="spacer"></span>${st !== "expired" ? `<a class="btn sm" href="#verify-${esc(c.id)}">+ Run verification</a>` : ""}</div>
+    <p class="small muted">Passes when every component's calculated % is within ±${esc(S.settings.tolerance)} of its theoretical %.</p>
+    ${(c.verifications || []).slice().reverse().map((v) => { const pass = verificationPassed(c, v); return `<h3>${fmtDate(v.on)} · ${esc(personName(v.by))} <span class="pill ${pass ? "good" : "bad"}">${pass ? "Pass" : "Fail"}</span></h3>
+      <div class="scroll"><table class="data"><tr><th>Component</th><th>Theoretical %</th><th>Peak area</th><th>Calculated %</th><th>Difference</th><th></th></tr>
+      ${v.rows.map((row) => { const k = verifyCalc(c, row); const ok = Math.abs(k.diff) <= Number(S.settings.tolerance) + 1e-9; return `<tr><td>${esc(row.name)}</td><td class="num mono">${fixed(row.theo, 4)}</td><td class="num mono">${fixed(row.area, 2)}</td><td class="num mono">${fixed(k.calc, 4)}</td><td class="num mono">${(k.diff >= 0 ? "+" : "") + k.diff.toFixed(4)}</td><td><span class="pill ${ok ? "good" : "bad"}">${ok ? "Pass" : "Fail"}</span></td></tr>`; }).join("")}
+      </table></div>`; }).join("") || `<p class="muted">No verifications yet.</p>`}
+  </section>
+  ${used.length ? `<section class="panel"><h2>Samples reported with this calibration</h2><p>${used.map((s) => `<a class="mono" href="#sample-${esc(s.id)}">${esc(s.number)}</a>`).join(", ")}</p></section>` : ""}
+  </div>`;
+}
+
+function verifyForm(c) {
+  if (!c) return notFound("calibration");
+  if (calStatus(c) === "expired") return `<div class="narrow"><div class="panel empty"><h2>This calibration has expired</h2><p>Expired calibrations are kept in the archive and can't be verified. <a href="#calibrate">Start a new calibration</a></p></div></div>`;
+  return `<div class="narrow">
+  <div class="head"><a class="crumb" href="#calibration-${esc(c.id)}">← Calibration</a></div>
+  <h1>Verify ${esc(blendById(c.blendId)?.name)} calibration (${fmtDate(c.on)})</h1>
+  <form id="verifyForm" data-cal="${esc(c.id)}" class="narrow" novalidate>
+    <section class="panel"><div class="form">
+      <div class="field"><label for="v-cyl">Standard cylinder ID</label><input type="text" id="v-cyl" value="${esc(c.cylinder)}"></div>
+      <div class="field"><label for="v-on">Verification date</label><input type="date" id="v-on" value="${today()}"></div>
+      <div class="field wide"><label for="v-notes">Notes</label><textarea id="v-notes" rows="2"></textarea></div>
+    </div></section>
+    <section class="panel"><h2>Verification run</h2>
+      <div class="scroll"><table class="data"><tr><th>Component</th><th>Response factor</th><th>Theoretical %</th><th>Peak area</th><th>Calculated %</th><th>Difference</th></tr>
+      ${c.components.map((x, i) => `<tr><td>${esc(x.name)}</td><td class="num mono">${compRF(x).rf.toPrecision(6)}</td>
+        <td><input type="text" inputmode="decimal" id="v-theo-${i}" value="${esc(x.std)}" data-live aria-label="${esc(x.name)} theoretical %"></td>
+        <td><input type="text" inputmode="decimal" id="v-area-${i}" data-live aria-label="${esc(x.name)} peak area"></td>
+        <td class="num mono" id="v-calc-${i}"></td><td class="num mono" id="v-diff-${i}"></td></tr>`).join("")}
+      </table></div>
+    </section>
+    <p class="err" id="formErr" role="alert"></p>
+    <div class="row"><button class="btn" type="submit" data-write>Save verification</button><a href="#calibration-${esc(c.id)}">Cancel</a></div>
+  </form></div>`;
+}
+
+function verifyLive() {
+  const c = calById($("#verifyForm").dataset.cal);
+  c.components.forEach((x, i) => {
+    const theo = $(`#v-theo-${i}`).value.trim(), area = $(`#v-area-${i}`).value.trim();
+    if (theo !== "" && area !== "" && isFinite(Number(theo)) && isFinite(Number(area))) {
+      const k = verifyCalc(c, { name: x.name, theo: Number(theo), area: Number(area) });
+      const ok = Math.abs(k.diff) <= Number(S.settings.tolerance) + 1e-9;
+      $(`#v-calc-${i}`).textContent = k.calc.toFixed(4);
+      $(`#v-diff-${i}`).innerHTML = `${(k.diff >= 0 ? "+" : "") + k.diff.toFixed(4)} <span class="pill ${ok ? "good" : "bad"}">${ok ? "Pass" : "Fail"}</span>`;
+    } else { $(`#v-calc-${i}`).textContent = ""; $(`#v-diff-${i}`).textContent = ""; }
+  });
+}
+
+async function submitVerify(form) {
+  const c = calById(form.dataset.cal);
+  const err = $("#formErr");
+  const rows = [];
+  for (let i = 0; i < c.components.length; i++) {
+    const theo = $(`#v-theo-${i}`).value.trim(), area = $(`#v-area-${i}`).value.trim();
+    if (![theo, area].every((x) => x !== "" && isFinite(Number(x)))) { err.textContent = `Fill in both values for ${c.components[i].name}.`; return; }
+    rows.push({ name: c.components[i].name, theo: Number(theo), area: Number(area) });
+  }
+  const v = { on: $("#v-on").value || today(), by: S.uid, cylinder: $("#v-cyl").value.trim(), notes: $("#v-notes").value.trim(), rows };
+  const pass = verificationPassed(c, v);
+  if (await write(() => S.db.doc("calibrations/" + c.id).update({ verifications: [...(c.verifications || []), v] }), pass ? "Verification passed. The calibration is active." : "Verification failed. The calibration can't be used.")) go("calibration-" + c.id);
+}
+
+/* ---------- Formulas ---------- */
+function formulasView() {
+  const methods = orderedMethods(S.methods.filter((m) => m.type === "formula"));
+  return `<div class="narrow"><h1>Formulas</h1>
+  <p class="muted">Each change saves a new version. Results already entered keep the version they were calculated with.</p>
+  ${methods.map((m) => { const f = currentFormula(m.id); return `<section class="panel">
+    <div class="head"><h2>${esc(m.name)} ${m.code ? `<span class="mono muted small">${esc(m.code)}</span>` : ""}</h2><span class="spacer"></span>${f && f.placeholder ? `<span class="pill warn">Placeholder</span>` : ""}<a class="btn sm" href="#formula-${esc(m.id)}">${f ? "Edit" : "Add formula"}</a></div>
+    ${f ? `<p class="mono">= ${esc(f.expression)}${f.unit ? `  [${esc(f.unit)}]` : ""}</p>
+      <p class="small muted">Version ${f.version} · inputs: ${f.inputs.map((x) => `${esc(x.label)} (<code>${esc(x.name)}</code>${x.unit ? ", " + esc(x.unit) : ""})`).join(", ")}</p>` : `<p class="muted">No formula yet.</p>`}
+  </section>`; }).join("") || `<div class="panel empty">No calculated tests. Set a test's result type to “Calculated from a formula” under <a href="#setup">Setup</a>.</div>`}
+  </div>`;
+}
+
+function formulaForm(m) {
+  if (!m) return notFound("test");
+  const f = currentFormula(m.id);
+  const inputs = f ? f.inputs.map((x) => [x.name, x.label, x.unit].join(" | ")).join("\n") : "";
+  return `<div class="narrow">
+  <div class="head"><a class="crumb" href="#formulas">← Formulas</a></div>
+  <h1>${esc(m.name)} formula${f ? ` <span class="muted" style="font-weight:400">(current: v${f.version})</span>` : ""}</h1>
+  <form id="formulaForm" data-method="${esc(m.id)}" class="panel" novalidate>
+    <div class="field"><label for="fx-inputs">Inputs</label><textarea id="fx-inputs" rows="5" class="mono" data-live>${esc(inputs)}</textarea>
+      <span class="hint">One per line: <code>name | label | unit</code>, e.g. <code>mass_g | Sample mass | g</code>. Names use letters, numbers and underscores.</span></div>
+    <div class="field"><label for="fx-expr">Formula</label><textarea id="fx-expr" rows="2" class="mono" data-live>${esc(f ? f.expression : "")}</textarea>
+      <span class="hint">Use the input names with + − * / ^ ( ). Functions: ${Object.keys(FUNCS).join(", ")}.</span></div>
+    <div class="form">
+      <div class="field"><label for="fx-unit">Result unit</label><input type="text" id="fx-unit" value="${esc(f ? f.unit : m.unit || "")}"></div>
+      <div class="field"><label for="fx-dec">Decimals shown</label><input type="number" id="fx-dec" min="0" max="8" value="${esc(f ? f.decimals : 2)}"></div>
+    </div>
+    <div class="field"><label for="fx-notes">Notes</label><textarea id="fx-notes" rows="2"></textarea></div>
+    <p class="out" id="fx-check" aria-live="polite"></p>
+    <div class="row"><button class="btn" type="submit" data-write>Save new version</button><a href="#formulas">Cancel</a></div>
+  </form></div>`;
+}
+
+function readFormulaForm() {
+  const inputs = [];
+  $("#fx-inputs").value.split("\n").forEach((line, n) => {
+    if (!line.trim()) return;
+    const [name, label, unit] = line.split("|").map((x) => (x || "").trim());
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`Line ${n + 1}: "${name}" is not a valid input name.`);
+    if (inputs.some((x) => x.name === name)) throw new Error(`Line ${n + 1}: "${name}" is listed twice.`);
+    inputs.push({ name, label: label || name, unit: unit || "" });
+  });
+  if (!inputs.length) throw new Error("Add at least one input.");
+  const expression = $("#fx-expr").value.trim();
+  checkFormula(expression, inputs.map((x) => x.name));
+  return { inputs, expression };
+}
+
+function formulaLive() {
+  const out = $("#fx-check");
+  try { readFormulaForm(); out.className = "out small"; out.innerHTML = `<span class="pill good">Formula is valid</span>`; }
+  catch (e) { out.className = "out err"; out.textContent = $("#fx-expr").value.trim() ? e.message : ""; }
+}
+
+async function submitFormula(form) {
+  const m = methodById(form.dataset.method);
+  let parsed;
+  try { parsed = readFormulaForm(); } catch (e) { $("#fx-check").className = "out err"; $("#fx-check").textContent = e.message; return; }
+  const version = Math.max(0, ...S.formulas.filter((f) => f.methodId === m.id).map((f) => f.version)) + 1;
+  const id = `${m.id}-v${version}`;
+  const body = { methodId: m.id, version, ...parsed, unit: $("#fx-unit").value.trim(), decimals: Math.max(0, Math.min(8, Number($("#fx-dec").value) || 0)), notes: $("#fx-notes").value.trim(), placeholder: false, createdBy: S.uid, createdAt: new Date().toISOString() };
+  if (await write(() => S.db.doc("formulas/" + id).set(body), `${m.name} formula v${version} saved.`)) go("formulas");
+}
+
+/* ---------- Setup ---------- */
+function setupView() {
+  const methods = orderedMethods();
+  const myInit = (S.uid && S.people[S.uid] && S.people[S.uid].initials) || "";
+  return `<div class="narrow"><h1>Setup</h1>
+  <section class="panel"><h2>Your initials</h2>
+    <p class="small muted">Shown in the sample log when you complete a test.</p>
+    <div class="row"><input type="text" id="my-init" value="${esc(myInit || initials(S.uid))}" maxlength="4" style="width:6em" aria-label="Your initials"><button class="btn ghost sm" data-saveinit data-write ${S.uid ? "" : "disabled"}>Save</button></div>
+  </section>
+  <section class="panel"><h2>Lab settings</h2><div class="form">
+    <div class="field"><label for="set-name">Lab name</label><input type="text" id="set-name" value="${esc(S.settings.labName)}"></div>
+    <div class="field"><label for="set-tol">Verification tolerance (± % points)</label><input type="text" inputmode="decimal" id="set-tol" value="${esc(S.settings.tolerance)}"></div>
+    <div class="field"><label for="set-months">Calibration valid (months)</label><input type="number" id="set-months" min="1" value="${esc(S.settings.validMonths)}"></div>
+    <div class="field wide"><label for="set-sig">Email signature</label><textarea id="set-sig" rows="3">${esc(S.settings.signature)}</textarea></div>
+  </div><div><button class="btn ghost" data-savesettings data-write>Save settings</button></div></section>
+
+  <section class="panel"><h2>Tests (sample log columns)</h2>
+    <div class="scroll"><table class="data"><tr><th>Test</th><th>Group</th><th>Result type</th><th>Method code</th><th>Order</th><th>Shown</th><th></th></tr>
+    ${methods.map((m) => `<tr><td>${esc(m.name)}${m.everySample ? ` <span class="pill plain">every sample</span>` : ""}</td><td>${esc(GROUPS.find((g) => g[0] === m.group)?.[1] || m.group)}</td><td class="small">${esc(TYPES[m.type])}</td>
+      <td><input type="text" id="m-code-${esc(m.id)}" value="${esc(m.code)}" style="width:8em" aria-label="${esc(m.name)} method code"></td>
+      <td><input type="number" id="m-order-${esc(m.id)}" value="${esc(m.order ?? 0)}" style="width:5em" aria-label="${esc(m.name)} order"></td>
+      <td><input type="checkbox" id="m-active-${esc(m.id)}" ${m.active !== false ? "checked" : ""} aria-label="${esc(m.name)} shown"></td>
+      <td><button class="btn ghost sm" data-savemethod="${esc(m.id)}" data-write>Save</button></td></tr>`).join("")}
+    </table></div>
+    <h3>Add a test</h3>
+    <div class="form">
+      <div class="field"><label for="nm-name">Name</label><input type="text" id="nm-name"></div>
+      <div class="field"><label for="nm-group">Group</label><select id="nm-group">${GROUPS.map(([g, l]) => `<option value="${g}">${l}</option>`).join("")}</select></div>
+      <div class="field"><label for="nm-type">Result type</label><select id="nm-type">${Object.entries(TYPES).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select></div>
+      <div class="field"><label for="nm-code">Method code</label><input type="text" id="nm-code"></div>
+      <div class="field"><label for="nm-unit">Unit</label><input type="text" id="nm-unit"></div>
+    </div>
+    <div><button class="btn ghost" data-addmethod data-write>Add test</button></div>
+  </section>
+
+  <section class="panel"><h2>Blends</h2>
+    <div class="scroll"><table class="data"><tr><th>Blend</th><th>Components (nominal %)</th></tr>
+    ${S.blends.map((b) => `<tr><td>${esc(b.name)}</td><td class="small">${(b.components || []).map((c) => `${esc(c.name)} ${esc(c.nominal)}%`).join(" · ")}</td></tr>`).join("") || `<tr><td colspan="2" class="muted">No blends yet.</td></tr>`}
+    </table></div>
+    <h3>Add a blend</h3>
+    <div class="form">
+      <div class="field"><label for="nb-name">Name</label><input type="text" id="nb-name" placeholder="e.g. R-407C"></div>
+      <div class="field wide"><label for="nb-comps">Components</label><textarea id="nb-comps" rows="3" class="mono" placeholder="R-32 | 23&#10;R-125 | 25&#10;R-134a | 52"></textarea><span class="hint">One per line: <code>component | nominal %</code></span></div>
+    </div>
+    <div><button class="btn ghost" data-addblend data-write>Add blend</button></div>
+  </section></div>`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Events                                                               */
+/* ------------------------------------------------------------------ */
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (el.closest("#main") && el.id) el.dataset.dirty = "1";
+  if (el.id === "logq") { ui.q = el.value; const pos = el.selectionStart; render(); const q = $("#logq"); if (q) { q.focus(); q.setSelectionRange(pos, pos); } return; }
+  const rf = el.closest("form[data-result]");
+  if (rf) livePreview(rf);
+  if (el.closest("#calForm")) calFormLive();
+  if (el.closest("#verifyForm")) verifyLive();
+  if (el.closest("#formulaForm")) formulaLive();
+});
+
+document.addEventListener("change", async (e) => {
+  const el = e.target;
+  if (el.id === "logshow") { ui.show = el.value; render(); return; }
+  if (el.id === "calBlend") { ui.calBlend = el.value; render(); return; }
+  if (el.id === "c-blend") { ui.calFormBlend = el.value; $$("#calForm [data-dirty]").forEach((x) => delete x.dataset.dirty); render(); return; }
+  if (el.dataset.status) {
+    const s = sampleById(route().slice(7));
+    const st = el.value;
+    await write(() => S.db.doc("samples/" + s.id).update({ tests: { [el.dataset.status]: { status: st, by: st === "completed" ? S.uid : null, at: st === "completed" ? new Date().toISOString() : null } } }), "Status updated.");
+    delete el.dataset.dirty;
+  }
+});
+
+document.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const f = e.target;
+  if (f.id === "sampleForm") return submitSample(f, e.submitter && e.submitter.dataset.another);
+  if (f.id === "calForm") return submitCal();
+  if (f.id === "verifyForm") return submitVerify(f);
+  if (f.id === "formulaForm") return submitFormula(f);
+  if (f.dataset.result) return saveResult(sampleById(route().slice(7)), f.dataset.result, f);
+});
+
+document.addEventListener("click", async (e) => {
+  const row = e.target.closest("tr[data-href]");
+  if (row && !e.target.closest("a, button, input, select")) { go(row.dataset.href); return; }
+  const b = e.target.closest("button");
+  if (!b) return;
+  const d = b.dataset;
+  if (d.toggle) { ui.expanded[d.toggle] = b.closest(".test").classList.contains("collapsed"); render(); return; }
+  if (d.addtest) { const mid = $("#addTest").value; await write(() => S.db.doc("samples/" + d.addtest).update({ tests: { [mid]: { status: "requested" } } }), `${methodById(mid).name} added.`); return; }
+  if (d.newreport) return createReport(sampleById(d.newreport));
+  if (d.askdelete) { ui.confirm = "delete-" + d.askdelete; render(); return; }
+  if (d.cancelconfirm !== undefined) { ui.confirm = null; render(); return; }
+  if (d.delsample) { ui.confirm = null; if (await write(() => S.db.doc("samples/" + d.delsample).delete(), "Sample deleted.")) go("log"); return; }
+  if (d.savereport) { await write(() => S.db.doc("reports/" + d.savereport).update({ to: $("#r-to").value.trim(), cc: $("#r-cc").value.trim(), notes: $("#r-notes").value.trim() }), "Report details saved."); $$("#main [data-dirty]").forEach((x) => delete x.dataset.dirty); return; }
+  if (d.pdf) { b.disabled = true; await downloadPdf(S.reports.find((r) => r.id === d.pdf)); b.disabled = false; return; }
+  if (d.copy) {
+    const el = $("#" + d.copy);
+    try { await navigator.clipboard.writeText(el.value); toast("Copied."); } catch { el.focus(); el.select(); toast("Press Ctrl+C to copy the selected text."); }
+    return;
+  }
+  if (d.sent) return markSent(S.reports.find((r) => r.id === d.sent));
+  if (d.calview) { ui.calArchive = d.calview === "archive"; render(); return; }
+  if (d.saveinit !== undefined) { const v = $("#my-init").value.trim().toUpperCase().slice(0, 4); await write(() => S.db.doc("people/" + S.uid).set({ initials: v }), "Initials saved."); return; }
+  if (d.savesettings !== undefined) {
+    const tol = Number($("#set-tol").value), months = Number($("#set-months").value);
+    if (!(tol > 0) || !(months >= 1)) { toast("Enter a tolerance above 0 and at least 1 month."); return; }
+    await write(() => S.db.doc("settings/lab").set({ labName: $("#set-name").value.trim(), tolerance: tol, validMonths: Math.round(months), signature: $("#set-sig").value.trim() }), "Settings saved.");
+    $$("#main [data-dirty]").forEach((x) => delete x.dataset.dirty);
+    return;
+  }
+  if (d.savemethod) {
+    const id = d.savemethod;
+    await write(() => S.db.doc("methods/" + id).update({ code: $("#m-code-" + CSS.escape(id)).value.trim(), order: Number($("#m-order-" + CSS.escape(id)).value) || 0, active: $("#m-active-" + CSS.escape(id)).checked }), "Test saved.");
+    ["m-code-", "m-order-", "m-active-"].forEach((p) => { const x = document.getElementById(p + id); if (x) delete x.dataset.dirty; });
+    return;
+  }
+  if (d.addmethod !== undefined) {
+    const name = $("#nm-name").value.trim();
+    if (!name) { toast("Enter the test name."); return; }
+    let id = slug(name); if (methodById(id)) id += "-" + uid36().slice(-4);
+    const group = $("#nm-group").value;
+    const order = Math.max(0, ...S.methods.filter((m) => m.group === group).map((m) => m.order || 0)) + 10;
+    if (await write(() => S.db.doc("methods/" + id).set({ name, group, type: $("#nm-type").value, code: $("#nm-code").value.trim(), unit: $("#nm-unit").value.trim(), order, active: true, everySample: false }), `${name} added.`)) {
+      ["nm-name", "nm-code", "nm-unit"].forEach((x) => { $("#" + x).value = ""; delete $("#" + x).dataset.dirty; });
+    }
+    return;
+  }
+  if (d.addblend !== undefined) {
+    const name = $("#nb-name").value.trim();
+    if (!name) { toast("Enter the blend name."); return; }
+    const components = [];
+    for (const line of $("#nb-comps").value.split("\n")) {
+      if (!line.trim()) continue;
+      const [cn, pct] = line.split("|").map((x) => (x || "").trim());
+      if (!cn || pct === "" || !isFinite(Number(pct))) { toast(`Check the line "${line.trim()}": use component | %.`); return; }
+      components.push({ name: cn, nominal: Number(pct) });
+    }
+    if (!components.length) { toast("Add at least one component."); return; }
+    if (await write(() => S.db.doc("blends/" + slug(name)).set({ name, components, active: true }), `${name} added.`)) {
+      ["nb-name", "nb-comps"].forEach((x) => { $("#" + x).value = ""; delete $("#" + x).dataset.dirty; });
+    }
+  }
+});
+
+window.addEventListener("hashchange", () => { ui.confirm = null; window.scrollTo(0, 0); render(); });
+
+/* ------------------------------------------------------------------ */
+/* Boot: connect to the shared database and subscribe once per list.    */
+/* ------------------------------------------------------------------ */
+async function refreshProfiles() {
+  if (!S.user) return;
+  const ids = new Set();
+  S.samples.forEach((s) => { ids.add(s.receivedBy); Object.values(s.tests || {}).forEach((t) => ids.add(t.by)); });
+  S.cals.forEach((c) => { ids.add(c.by); (c.verifications || []).forEach((v) => ids.add(v.by)); });
+  S.reports.forEach((r) => { ids.add(r.createdBy); ids.add(r.sentBy); });
+  if (S.uid) ids.add(S.uid);
+  const list = [...ids].filter(Boolean);
+  if (!list.length) return;
+  const before = JSON.stringify(Object.keys(S.profiles).map((k) => [k, S.profiles[k].name]));
+  const ps = await S.user.profiles(list);
+  for (const [k, p] of Object.entries(ps)) S.profiles[k] = { name: p.name };
+  if (JSON.stringify(Object.keys(S.profiles).map((k) => [k, S.profiles[k].name])) !== before) scheduleRender();
+}
+
+(async function boot() {
+  const claude = window.claude;
+  const [db, user] = await Promise.all([claude?.use("db") ?? null, claude?.use("user") ?? null]);
+  S.db = db; S.user = user;
+  if (!db) { render(); return; }
+  if (user) {
+    const me = await user.me();
+    S.uid = me.id;
+    $("#who").textContent = me.name || "";
+    const can = await user.can("data.write");
+    S.canWrite = can === false ? false : can === true ? true : null;
+  }
+  const keyFor = { calibrations: "cals" };
+  for (const name of COLLECTIONS) {
+    db.collection(name).onSnapshot((snap) => {
+      const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      if (name === "people") S.people = Object.fromEntries(docs.map((d) => [d.id, d]));
+      else S[keyFor[name] || name] = docs;
+      S.loaded.add(name);
+      scheduleRender();
+      refreshProfiles();
+    }, (err) => { toast(`Lost the live connection to ${name}. Reload the page.`); console.warn(err); });
+  }
+  db.doc("settings/lab").onSnapshot((snap) => {
+    if (snap.exists) S.settings = { ...S.settings, ...snap.data() };
+    scheduleRender();
+  });
+})();
+</script>
