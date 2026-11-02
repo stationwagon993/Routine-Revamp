@@ -11,6 +11,7 @@
     {% include "lab/_field.html" with field=form.result_unit %}
     {% include "lab/_field.html" with field=form.decimals %}
   </div>
+  {% include "lab/_field.html" with field=form.report_limit %}
   {% include "lab/_field.html" with field=form.notes %}
   <div class="field check" style="margin-top: 8px;">
     <label>{{ form.both_pressures }} Also save it as the formula for {{ other_label|lower }}</label>

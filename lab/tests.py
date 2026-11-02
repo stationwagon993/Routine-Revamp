@@ -9,6 +9,10 @@ from django.urls import reverse
 from . import formulas, outlook, reports, services
 from .models import (
     Blend,
+    NCCalibration,
+    NCVerification,
+    StandardComponent,
+    StandardCylinder,
     Calibration,
     CalibrationComponent,
     Formula,
@@ -29,9 +33,16 @@ class FormulaEvaluationTests(TestCase):
         self.assertAlmostEqual(value, 30.05)
 
     def test_rejects_code(self):
-        for bad in ["__import__('os')", "a.__class__", "[1, 2]", "a if a else 1", "open('x')"]:
+        for bad in ["__import__('os')", "a.__class__", "[1, 2]", "open('x')", "a < 1 and a", "lambda: 1"]:
             with self.subTest(bad=bad), self.assertRaises(formulas.FormulaError):
                 formulas.validate(bad, ["a"])
+
+    def test_conditionals_for_reporting_limits(self):
+        limit = "0.05 if mass_g < 5 else 0.01"
+        self.assertEqual(formulas.evaluate(limit, {"mass_g": 1.5}), 0.05)
+        self.assertEqual(formulas.evaluate(limit, {"mass_g": 7.5}), 0.01)
+        with self.assertRaises(formulas.FormulaError):
+            formulas.evaluate("mass_g < 5", {"mass_g": 1})  # a comparison alone isn't a number
 
     def test_rejects_undeclared_names(self):
         with self.assertRaisesMessage(formulas.FormulaError, "mass"):
@@ -134,8 +145,11 @@ class CalibrationTests(LabTestCase):
         self.assertEqual(cal.status, Calibration.STATUS_FAILED)
         self.assertIsNone(self.blend.active_calibration())
 
-    def verify(self, cal, cc32, cc125, areas, theoretical=(50.0, 50.0), max_error=1.0):
-        v = Verification.objects.create(calibration=cal, performed_by=self.user, max_error_percent=max_error)
+    def verify(self, cal, cc32, cc125, areas, theoretical=(50.0, 50.0), max_error=1.0, rule=Blend.RULE_PERCENT, on=None):
+        v = Verification.objects.create(
+            calibration=cal, performed_by=self.user, rule=rule, limit=max_error,
+            performed_on=on or datetime.date.today(),
+        )
         for cc, area, theo in zip((cc32, cc125), areas, theoretical):
             VerificationComponent.objects.create(
                 verification=v, calibration_component=cc, theoretical_percent=theo, peak_area=area
@@ -160,6 +174,47 @@ class CalibrationTests(LabTestCase):
         self.assertFalse(v.passed)
         self.assertEqual(cal.status, Calibration.STATUS_FAILED)  # latest verification decides
 
+    def test_verification_within_points_band(self):
+        cal, cc32, cc125 = self.make_calibration(verify=False)
+        # 30/70 standard measured as 30.3/69.7: 0.3 points off.
+        v = self.verify(cal, cc32, cc125, areas=(6.06, 13.94), theoretical=(30.0, 70.0), max_error=0.3049, rule=Blend.RULE_POINTS)
+        self.assertTrue(v.passed)
+        v = self.verify(cal, cc32, cc125, areas=(6.06, 13.94), theoretical=(30.0, 70.0), max_error=0.25, rule=Blend.RULE_POINTS)
+        self.assertFalse(v.passed)
+
+    def test_verification_expires(self):
+        cal, cc32, cc125 = self.make_calibration(verify=False)
+        today = datetime.date.today()
+        v = self.verify(cal, cc32, cc125, areas=(10, 10), on=today - datetime.timedelta(days=8))
+        self.assertEqual(v.expires_on, today - datetime.timedelta(days=1))  # 7 days by default
+        self.assertEqual(cal.status, Calibration.STATUS_REVERIFY)
+        self.assertIsNone(self.blend.active_calibration())
+        self.verify(cal, cc32, cc125, areas=(10, 10))
+        self.assertEqual(self.blend.active_calibration(), cal)
+        # R-514A verifications are good for 1 day (from the GC workbook).
+        self.assertEqual(Blend.objects.get(name="R-514A").verification_valid_days, 1)
+
+    def test_workbook_rules_loaded(self):
+        rules = {b.name: (b.verification_rule, b.verification_limit) for b in Blend.objects.all()}
+        self.assertEqual(rules["R-454B"], (Blend.RULE_POINTS, 0.5049))
+        self.assertEqual(rules["R-410A"], (Blend.RULE_POINTS, 0.3049))
+        self.assertIn("R-452A", rules)
+
+    def test_standard_composition_expiry_and_remaining(self):
+        standard = StandardCylinder.objects.create(
+            blend=self.blend, code="R-410A-110226-A", prepared_on=datetime.date(2026, 11, 2),
+            cylinder_gross_g=1454.42, cylinder_tare_g=986.16, full_fill_g=1000,
+        )
+        StandardComponent.objects.create(cylinder=standard, component=self.r32, mass_g=265.86)
+        StandardComponent.objects.create(cylinder=standard, component=self.r125, mass_g=119.86)
+        composition = standard.composition()
+        self.assertAlmostEqual(composition[self.r32.pk], 265.86 / 385.72 * 100)
+        self.assertEqual(standard.expires_on, datetime.date(2026, 11, 9))
+        self.assertTrue(standard.is_usable(datetime.date(2026, 11, 9)))
+        self.assertFalse(standard.is_usable(datetime.date(2026, 11, 10)))
+        self.assertAlmostEqual(standard.remaining_fraction, 0.46826)
+        self.assertTrue(standard.needs_replacing)
+
     def test_unverified_and_expired_are_not_active(self):
         self.make_calibration(verify=False)
         self.make_calibration(on=datetime.date.today() - datetime.timedelta(days=200))
@@ -176,10 +231,11 @@ class ResultTests(LabTestCase):
             self.user,
             {
                 "formula_id": formula.pk,
-                "input_v_sample_ml": "1.5",
-                "input_v_blank_ml": "0.5",
-                "input_normality": "0.1",
                 "input_mass_g": "5.61",
+                "input_start_ml": "0",
+                "input_finish_ml": "1.5",
+                "input_blank_start_ml": "0",
+                "input_blank_finish_ml": "0.5",
             },
         )
         test.refresh_from_db()
@@ -227,7 +283,7 @@ class ResultTests(LabTestCase):
         method = TestMethod.objects.get(name="High Boiling Residue")
         high = method.current_formula(Formula.PRESSURE_HIGH)
         low = Formula.objects.create(
-            test_method=method, pressure=Formula.PRESSURE_LOW, version=2,
+            test_method=method, pressure=Formula.PRESSURE_LOW, version=99,
             expression="residue_g / mass_g * 50", inputs=high.inputs, result_unit="%",
         )
         for refrigerant, expected in [("R-1233zd(E)", low), ("R-1336MZZ(Z)", low), ("R-514A", low),
@@ -248,9 +304,9 @@ class ResultTests(LabTestCase):
         sample = self.make_sample()
         test = self.add_test(sample, "Moisture")
         v1 = TestMethod.objects.get(name="Moisture").current_formula()
-        services.save_results(test, self.user, {"formula_id": v1.pk, "input_water_ug": "50", "input_mass_g": "10"})
+        services.save_results(test, self.user, {"formula_id": v1.pk, "input_rep1_ppm": "4", "input_rep2_ppm": "5", "input_rep3_ppm": "6"})
         v2 = Formula.objects.create(
-            test_method=v1.test_method, version=2, expression="water_ug / mass_g * 2",
+            test_method=v1.test_method, version=v1.version + 1, expression="rep1_ppm * 2",
             inputs=v1.inputs, result_unit="ppm",
         )
         self.assertEqual(v1.test_method.current_formula(), v2)
@@ -540,6 +596,10 @@ class ViewTests(LabTestCase):
             reverse("lab:verification_create", args=[cal.pk]),
             reverse("lab:formula_list"),
             reverse("lab:formula_new_version", args=[TestMethod.objects.get(name="TAN").pk]),
+            reverse("lab:standard_list") + "?show=all",
+            reverse("lab:standard_create"),
+            reverse("lab:standard_create") + f"?blend={self.blend.pk}",
+            reverse("lab:nc_calibration_create"),
         ]
         for url in urls:
             with self.subTest(url=url):
@@ -550,41 +610,67 @@ class ViewTests(LabTestCase):
         test = self.add_test(sample, "Moisture")
         formula = test.test_method.current_formula()
         url = reverse("lab:test_calculate", args=[test.pk])
-        ok = self.client.post(url, {"formula_id": formula.pk, "input_water_ug": "50", "input_mass_g": "10"}).json()
+        data = {"formula_id": formula.pk, "input_rep1_ppm": "4", "input_rep2_ppm": "5", "input_rep3_ppm": "6"}
+        ok = self.client.post(url, data).json()
         self.assertEqual(ok, {"ok": True, "results": [{"label": "", "value": "5.0", "unit": "ppm"}]})
-        bad = self.client.post(url, {"formula_id": formula.pk, "input_water_ug": "50", "input_mass_g": "0"}).json()
+        bad = self.client.post(url, dict(data, input_rep3_ppm="abc")).json()
         self.assertFalse(bad["ok"])
         self.assertFalse(test.results.exists())
 
-    def test_calibration_and_verification_through_views(self):
+    def add_standard(self, code, r32_g, r125_g, prepared_on=None):
         response = self.client.post(
-            reverse("lab:calibration_create") + f"?blend={self.blend.pk}",
+            reverse("lab:standard_create") + f"?blend={self.blend.pk}",
             {
-                "standard_cylinder": "STD-9",
-                "performed_on": datetime.date.today().isoformat(),
-                f"percent_{self.r32.pk}": "50", f"run1_{self.r32.pk}": "10", f"run2_{self.r32.pk}": "10", f"run3_{self.r32.pk}": "10",
-                f"percent_{self.r125.pk}": "50", f"run1_{self.r125.pk}": "20", f"run2_{self.r125.pk}": "20", f"run3_{self.r125.pk}": "20",
+                "code": code, "prepared_on": (prepared_on or datetime.date.today()).isoformat(),
+                "status": StandardCylinder.STATUS_ON_HAND,
+                f"mass_{self.r32.pk}": r32_g, f"mass_{self.r125.pk}": r125_g,
             },
         )
+        self.assertRedirects(response, reverse("lab:standard_list"))
+        return StandardCylinder.objects.get(code=code)
+
+    def test_calibration_and_verification_through_views(self):
+        today = datetime.date.today().isoformat()
+        cal_std = self.add_standard("R-410A-A", "100", "100")  # 50/50
+        ver_std = self.add_standard("R-410A-B", "60", "140")  # 30/70
+        old_std = self.add_standard("R-410A-OLD", "100", "100", prepared_on=datetime.date.today() - datetime.timedelta(days=8))
+        runs = {
+            f"run1_{self.r32.pk}": "10", f"run2_{self.r32.pk}": "10", f"run3_{self.r32.pk}": "10",
+            f"run1_{self.r125.pk}": "20", f"run2_{self.r125.pk}": "20", f"run3_{self.r125.pk}": "20",
+        }
+        url = reverse("lab:calibration_create") + f"?blend={self.blend.pk}"
+        response = self.client.post(url, {"standard": old_std.pk, "performed_on": today, **runs})
+        self.assertIn("standard", response.context["form"].errors)  # past its 7 days
+        response = self.client.post(url, {"standard": cal_std.pk, "performed_on": today, **runs})
         cal = Calibration.objects.get()
         self.assertRedirects(response, cal.get_absolute_url())
+        self.assertEqual(cal.standard_cylinder, "R-410A-A")
         cc32, cc125 = cal.components.all()
+        self.assertEqual(cc32.standard_percent, 50.0)  # from the standard's masses
+        self.assertAlmostEqual(cc32.response_factor, 5.0)
+        self.assertAlmostEqual(cc125.response_factor, 2.5)
+        # 30/70 standard: areas 6 and 28 give raw 30% + 70%.
         self.client.post(
             reverse("lab:verification_create", args=[cal.pk]),
             {
-                "standard_cylinder": "STD-9",
-                "performed_on": datetime.date.today().isoformat(),
-                "max_error_percent": "1.5",
-                f"theoretical_{cc32.pk}": "50", f"area_{cc32.pk}": "10",
-                f"theoretical_{cc125.pk}": "50", f"area_{cc125.pk}": "20",
+                "standard": ver_std.pk, "performed_on": today,
+                "verification_rule": Blend.RULE_POINTS, "verification_limit": "0.3049",
+                f"area_{cc32.pk}": "6.06", f"area_{cc125.pk}": "27.88", f"rt_{cc32.pk}": "3.95",
+                "purity": "99.98", "air_area": "100.1", "air_rt": "2.593",
             },
         )
+        verification = cal.latest_verification
+        self.assertEqual(verification.standard, ver_std)
+        self.assertEqual((verification.rule, verification.limit), (Blend.RULE_POINTS, 0.3049))
+        r32, r125 = verification.component_rows()
+        self.assertAlmostEqual(r32.theoretical_percent, 30.0)
+        self.assertAlmostEqual(r32.calculated_percent, 30.3)
+        self.assertTrue(verification.passed)
         self.assertEqual(self.blend.active_calibration(), cal)
         self.blend.refresh_from_db()
-        self.assertEqual(self.blend.max_error_percent, 1.5)  # remembered for the blend
-        self.assertEqual(cal.latest_verification.max_error_percent, 1.5)
-        page = self.client.get(reverse("lab:verification_create", args=[cal.pk]))
-        self.assertEqual(page.context["form"]["max_error_percent"].value(), 1.5)
+        self.assertEqual(self.blend.verification_limit, 0.3049)  # remembered for the blend
+        self.assertContains(self.client.get(cal.get_absolute_url()), "±0.3049 points")
+        self.assertContains(self.client.get(reverse("lab:calibration_list")), "R-410A-B")
 
     def test_formula_new_version_through_view(self):
         method = TestMethod.objects.get(name="Acidity")
@@ -600,7 +686,7 @@ class ViewTests(LabTestCase):
         )
         self.assertRedirects(response, reverse("lab:formula_list"))
         current = method.current_formula()
-        self.assertEqual(current.version, 2)
+        self.assertEqual(current.version, 3)  # v1 placeholder, v2 the workbook formula
         self.assertFalse(current.is_placeholder)
 
     def test_formula_for_one_or_both_pressures_through_view(self):
@@ -611,8 +697,8 @@ class ViewTests(LabTestCase):
         data = {"inputs_text": "r | Residue | g\nm | Mass | g", "expression": "r / m * 100", "result_unit": "%", "decimals": "3"}
         self.assertRedirects(self.client.post(url, data), reverse("lab:formula_list"))  # unticked
         low = method.current_formula(Formula.PRESSURE_LOW)
-        self.assertEqual((low.version, low.expression), (2, "r / m * 100"))
-        self.assertEqual(method.current_formula(Formula.PRESSURE_HIGH).version, 1)  # untouched
+        self.assertEqual((low.version, low.expression), (3, "r / m * 100"))
+        self.assertEqual(method.current_formula(Formula.PRESSURE_HIGH).version, 2)  # untouched
         self.assertFalse(self.client.get(url).context["form"]["both_pressures"].value())
         moisture = TestMethod.objects.get(name="Moisture")
         both = dict(data, expression="r / m", both_pressures="on")
@@ -632,4 +718,77 @@ class ViewTests(LabTestCase):
             {"inputs_text": "v | Volume | mL", "expression": "__import__('os')", "decimals": "1"},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(method.current_formula().version, 1)
+        self.assertEqual(method.current_formula().version, 2)
+
+
+class WorkbookFormulaTests(LabTestCase):
+    """The formulas from the Master Routine Spreadsheet give the spreadsheet's answers."""
+
+    def result(self, test_name, refrigerant="R-134a", **inputs):
+        sample = self.make_sample(refrigerant_type=refrigerant)
+        test = self.add_test(sample, test_name)
+        formula = test.test_method.current_formula(sample.pressure)
+        data = {"formula_id": formula.pk, **{f"input_{k}": str(v) for k, v in inputs.items()}}
+        return services.compute_results(test, data)[0][0]
+
+    def test_hbr_uses_refrigerant_density(self):
+        r = self.result("High Boiling Residue", cyl_tare_g=900, cyl_gross_g=1000, beaker_tare_g=50, beaker_final_g=50.05)
+        self.assertAlmostEqual(r.value, (0.05 / 0.9) / (100 / 1.21) * 100)
+        self.assertEqual(r.unit, "% vol")
+        self.assertEqual(r.inputs["refrigerant_density"], 1.21)
+        with self.assertRaisesMessage(services.ResultError, "No liquid density is set up for R-22"):
+            self.result("High Boiling Residue", refrigerant="R-22", cyl_tare_g=900, cyl_gross_g=1000, beaker_tare_g=50, beaker_final_g=50.05)
+
+    def test_acidity_ocr_ri_moisture(self):
+        self.assertAlmostEqual(self.result("Acidity", mass_g=100, start_ml=1, finish_ml=1.5).value, 0.5 * 0.01 * 36500 / 100)
+        self.assertAlmostEqual(
+            self.result("Oil Circulation Rates", cyl_tare_g=900, cyl_gross_g=1000, beaker_tare_g=50, beaker_final_g=50.5).value, 0.5
+        )
+        ri = self.result("Refractive Index", ri_contaminant=1.45667, ri_base=1.45478, ri_sample=1.45486)
+        self.assertEqual(ri.display_value, "96")  # the spreadsheet's 95.77, reported to a whole %
+        self.assertAlmostEqual(self.result("Moisture", rep1_ppm=10, rep2_ppm=12, rep3_ppm=14).value, 12)
+
+    def test_tan_reporting_limit_depends_on_method(self):
+        tan = self.result("TAN", mass_g=7.5, start_ml=0, finish_ml=0.06, blank_start_ml=0, blank_finish_ml=0.05)
+        self.assertAlmostEqual(tan.value, 0.01 * 0.1 * 56.1 / 7.5)  # 0.0075
+        self.assertEqual(tan.display_value, "<0.01")  # 5–10 g method
+        tan = self.result("TAN", mass_g=1.5, start_ml=0, finish_ml=0.06, blank_start_ml=0, blank_finish_ml=0.05)
+        self.assertEqual(tan.display_value, "<0.05")  # 1–2 g method
+        tan = self.result("TAN", mass_g=5.61, start_ml=0, finish_ml=1.5, blank_start_ml=0, blank_finish_ml=0.5)
+        self.assertEqual(tan.text_value, "")
+        self.assertAlmostEqual(tan.value, 1.0)
+
+
+class NonCondensablesTests(LabTestCase):
+    def test_calibrate_verify_and_report(self):
+        self.client.force_login(self.user)
+        today = datetime.date.today().isoformat()
+        areas = [311.5, 312.9, 321.3, 322.8, 322.2, 322.2, 320.5, 313.5, 314.3, 323.8]  # the workbook's NC sheet
+        response = self.client.post(
+            reverse("lab:nc_calibration_create"),
+            {"performed_on": today, "standard_name": "Nitrogen in Helium", "n2_percent": "1.48",
+             **{f"area_{i}": a for i, a in enumerate(areas, start=1)}},
+        )
+        cal = NCCalibration.objects.get()
+        self.assertRedirects(response, cal.get_absolute_url())
+        self.assertAlmostEqual(cal.area_per_percent, 215.2027027, places=5)  # workbook: 215.2027
+        self.assertIsNone(NCCalibration.active())  # not verified yet
+
+        self.client.post(
+            reverse("lab:nc_verification_create", args=[cal.pk]),
+            {"performed_on": today, "standard_name": "Nitrogen in Helium", "n2_percent": "0.789",
+             "max_error_percent": "6", "area_1": "161.5", "area_2": "159.2", "area_3": "158.6", "area_4": "162.8"},
+        )
+        verification = NCVerification.objects.get()
+        self.assertAlmostEqual(verification.result_percent, 0.7459246, places=6)  # workbook: 0.0074592 (fraction)
+        self.assertAlmostEqual(verification.percent_error, -5.4594871, places=5)  # workbook: -5.46%
+        self.assertTrue(verification.passed)
+        self.assertEqual(NCCalibration.active(), cal)
+
+        sample = self.make_sample()
+        test = self.add_test(sample, "Non-Condensables")
+        services.save_results(test, self.user, {"nc_area_1": "310", "nc_area_2": "312", "nc_area_3": "314.2", "nc_area_4": "312.2"})
+        test.refresh_from_db()
+        self.assertEqual(test.nc_calibration, cal)
+        self.assertAlmostEqual(test.results.get().value, 1.4502606, places=6)  # workbook: 0.0145026 (fraction)
+        self.assertContains(self.client.get(sample.get_absolute_url()), "NC calibration")

@@ -20,6 +20,12 @@
       {% for i in current.inputs %}{{ i.label }} (<code>{{ i.name }}</code>{% if i.unit %}, {{ i.unit }}{% endif %}){% if not forloop.last %}, {% endif %}{% endfor %}
       {% if current.is_placeholder %}<span class="pill unverified">Placeholder – replace with the lab's formula</span>{% endif %}
     </p>
+    {% if current.report_limit or current.sample_variables %}
+    <p class="muted" style="margin: 2px 0 0;">
+      {% if current.sample_variables %}From the sample: {% for v in current.sample_variables %}<code>{{ v }}</code>{% if not forloop.last %}, {% endif %}{% endfor %} (Admin → Refrigerant densities).{% endif %}
+      {% if current.report_limit %}Reported as “&lt;limit” at or below <code>{{ current.report_limit }}</code>.{% endif %}
+    </p>
+    {% endif %}
     {% else %}
     <p class="muted">No formula yet.</p>
     {% endif %}

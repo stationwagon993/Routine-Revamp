@@ -7,28 +7,38 @@
   {% csrf_token %}
   {{ form.non_field_errors }}
   <div class="panel">
+    {% if not form.usable_standards %}<div class="banner-warn">No {{ calibration.blend }} standard is on hand and within {{ STANDARD_VALID_DAYS }} days of preparation. <a href="{% url 'lab:standard_create' %}?blend={{ calibration.blend_id }}">Add a standard</a> first.</div>{% endif %}
     <div class="form-grid">
-      {% include "lab/_field.html" with field=form.standard_cylinder %}
+      {% include "lab/_field.html" with field=form.standard %}
       {% include "lab/_field.html" with field=form.performed_on %}
-      {% include "lab/_field.html" with field=form.max_error_percent %}
-      {% include "lab/_field.html" with field=form.notes wide=True %}
+      {% include "lab/_field.html" with field=form.verification_rule %}
+      {% include "lab/_field.html" with field=form.verification_limit %}
     </div>
+    <p class="muted" style="margin-bottom: 0;">A passing verification lets the calibration be used for {{ calibration.blend.verification_valid_days }} day{{ calibration.blend.verification_valid_days|pluralize }} (set per blend in Admin → Blends).</p>
   </div>
   <div class="panel">
     <h2>Verification run</h2>
-    <p class="muted">Calculated % = peak area × response factor, normalized so the components add up to 100%.
-      Each component passes if its % error (|calculated − theoretical| ÷ theoretical × 100) is at or below the allowed % error.</p>
+    <p class="muted">Theoretical % comes from the verification standard's masses. Calculated % = peak area × response factor, normalized so the components add up to 100%.
+      With “± points” each component passes when |calculated − theoretical| is within the limit; with “% error” when |calculated − theoretical| ÷ theoretical × 100 is.</p>
     <table class="data">
-      <tr><th>Component</th><th>Response factor</th><th>Theoretical %</th><th>Peak area</th></tr>
-      {% for cc, theoretical, area in form.component_rows %}
+      <tr><th>Component</th><th>Response factor</th><th>Peak area (µV)</th><th>RT (min)</th></tr>
+      {% for cc, area, rt in form.component_rows %}
       <tr>
         <td>{{ cc.component.name }}</td>
         <td class="num mono">{{ cc.response_factor|num:8 }}</td>
-        <td>{{ theoretical }}{{ theoretical.errors }}</td>
         <td>{{ area }}{{ area.errors }}</td>
+        <td>{{ rt }}{{ rt.errors }}</td>
       </tr>
       {% endfor %}
     </table>
+    <div class="form-grid" style="margin-top: 12px;">
+      {% include "lab/_field.html" with field=form.air_area %}
+      {% include "lab/_field.html" with field=form.air_rt %}
+      {% include "lab/_field.html" with field=form.co2_area %}
+      {% include "lab/_field.html" with field=form.co2_rt %}
+      {% include "lab/_field.html" with field=form.purity %}
+      {% include "lab/_field.html" with field=form.notes wide=True %}
+    </div>
   </div>
   <div class="actions">
     <button type="submit">Save verification</button>

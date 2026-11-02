@@ -1,0 +1,43 @@
+{% extends "lab/base.html" %}
+{% load lab_extras %}
+{% block title %}Standard log{% endblock %}
+{% block content %}
+<div class="actions" style="margin-bottom: 8px;"><a href="{% url 'lab:calibration_list' %}">← Calibrations</a></div>
+<div class="actions" style="justify-content: space-between;">
+  <h1>Standard log</h1>
+  <a class="btn" href="{% url 'lab:standard_create' %}{% if blend_id %}?blend={{ blend_id }}{% endif %}">+ Add standard</a>
+</div>
+<p class="muted">Gravimetric standards: composition = each component's mass ÷ total mass. A standard can be used for calibrations and verifications for {{ STANDARD_VALID_DAYS }} days after it's prepared, while it's on hand. It's flagged for replacement below 60% remaining.</p>
+
+<div class="panel">
+  <form method="get" class="actions" style="margin-bottom: 10px;">
+    <select name="show" onchange="this.form.submit()" aria-label="Show">
+      <option value="on_hand" {% if show == "on_hand" %}selected{% endif %}>On hand</option>
+      <option value="all" {% if show == "all" %}selected{% endif %}>All standards</option>
+    </select>
+    <select name="blend" onchange="this.form.submit()" aria-label="Blend">
+      <option value="">All blends</option>
+      {% for b in blends %}<option value="{{ b.pk }}" {% if b.pk|stringformat:"s" == blend_id %}selected{% endif %}>{{ b }}</option>{% endfor %}
+    </select>
+  </form>
+  <table class="data">
+    <tr><th>Std. code</th><th>Blend</th><th>Prepared</th><th>By</th><th>Status</th><th>Usable until</th><th>Composition (mass, %)</th><th>Remaining</th></tr>
+    {% for s in standards %}
+    {% with composition=s.composition %}
+    <tr>
+      <td><a href="{{ s.get_absolute_url }}">{{ s.code }}</a></td>
+      <td>{{ s.blend }}</td>
+      <td>{{ s.prepared_on|date:"m/d/Y" }}</td>
+      <td>{{ s.prepared_by|person }}</td>
+      <td>{{ s.get_status_display }}</td>
+      <td>{{ s.expires_on|date:"m/d/Y" }}</td>
+      <td>{% for c in s.components.all %}{{ c.component.name }}: {{ c.mass_g|stringformat:"g" }} g ({{ composition|get:c.component_id|num:3 }}%){% if not forloop.last %}<br>{% endif %}{% endfor %}</td>
+      <td>{% if s.remaining_fraction is not None %}{{ s.remaining_fraction|percent }}{% if s.needs_replacing %} <span class="pill failed">Replace</span>{% endif %}{% else %}—{% endif %}</td>
+    </tr>
+    {% endwith %}
+    {% empty %}
+    <tr><td colspan="8" class="muted">No standards.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

@@ -2,11 +2,8 @@
 {% block title %}Sample Log{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-{% for cal in expiring %}
-<div class="banner-warn">
-  The {{ cal.blend }} calibration expires on {{ cal.expires_on|date:"m/d/Y" }}.
-  <a href="{% url 'lab:calibration_create' %}?blend={{ cal.blend_id }}">Calibrate now</a>
-</div>
+{% for w in calibration_warnings %}
+<div class="banner-warn">{{ w.text }} <a href="{{ w.url }}">{{ w.link }}</a></div>
 {% endfor %}
 
 <div class="log-tools">

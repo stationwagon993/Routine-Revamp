@@ -1,7 +1,7 @@
 {% extends "lab/base.html" %}
-{% block title %}New calibration{% endblock %}
+{% block title %}{{ title }}{% endblock %}
 {% block content %}
-<h1>New calibration</h1>
+<h1>{{ title }}</h1>
 <form method="get" class="panel actions">
   <label for="blend"><strong>Blend:</strong></label>
   <select name="blend" id="blend">

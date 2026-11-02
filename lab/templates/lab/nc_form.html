@@ -1,0 +1,35 @@
+{% extends "lab/base.html" %}
+{% load lab_extras %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1>{{ title }}</h1>
+<form method="post">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  <div class="panel">
+    <div class="form-grid">
+      {% include "lab/_field.html" with field=form.performed_on %}
+      {% include "lab/_field.html" with field=form.standard_name %}
+      {% include "lab/_field.html" with field=form.lot_number %}
+      {% include "lab/_field.html" with field=form.n2_percent %}
+      {% if form.max_error_percent %}{% include "lab/_field.html" with field=form.max_error_percent %}{% endif %}
+      {% if form.baseline_air_peak %}{% include "lab/_field.html" with field=form.baseline_air_peak %}{% endif %}
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Replicate peak areas (µV)</h2>
+    <p class="muted">
+      {% if calibration %}Result = average area ÷ the calibration's area for 1.00% N₂ ({{ calibration.area_per_percent|floatformat:2 }} µV). Enter at least {{ form.area_required }}.
+      {% else %}Area for 1.00% N₂ = average area ÷ % N₂ in the standard. The baseline air peak is recorded, not averaged in. Enter at least {{ form.area_required }}.{% endif %}
+    </p>
+    <div class="form-grid">
+      {% for name in form.area_names %}{% with field=form|getfield:name %}{% include "lab/_field.html" with field=field %}{% endwith %}{% endfor %}
+    </div>
+    <div style="margin-top: 10px;">{% include "lab/_field.html" with field=form.notes %}</div>
+  </div>
+  <div class="actions">
+    <button type="submit">Save</button>
+    <a href="{% if calibration %}{{ calibration.get_absolute_url }}{% else %}{% url 'lab:calibration_list' %}{% endif %}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

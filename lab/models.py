@@ -1,6 +1,7 @@
 import calendar
 import datetime
 import re
+import statistics
 
 from django.conf import settings
 from django.db import models, transaction
@@ -64,11 +65,13 @@ class TestMethod(models.Model):
     CALC_MANUAL = "manual"
     CALC_FORMULA = "formula"
     CALC_BLEND = "blend"
+    CALC_NC = "nc"
     CALC_CHOICES = [
         (CALC_TRACKING, "Status only (no result)"),
         (CALC_MANUAL, "Result typed in directly"),
         (CALC_FORMULA, "Calculated from a formula"),
         (CALC_BLEND, "Blend analysis from the active calibration"),
+        (CALC_NC, "Non-condensables from the active NC calibration"),
     ]
 
     name = models.CharField(max_length=100, unique=True)
@@ -140,6 +143,13 @@ class Formula(models.Model):
     inputs = models.JSONField(default=list)
     result_unit = models.CharField(max_length=30, blank=True)
     decimals = models.PositiveSmallIntegerField(default=2)
+    report_limit = models.CharField(
+        "reporting limit",
+        max_length=200,
+        blank=True,
+        help_text="Results at or below this are reported as “&lt;limit”. A number, or a formula "
+        "using the inputs, e.g. <code>0.05 if mass_g &lt; 5 else 0.01</code>.",
+    )
     notes = models.TextField(blank=True)
     is_placeholder = models.BooleanField(
         default=False, help_text="Example formula that has not been confirmed by the lab."
@@ -162,9 +172,13 @@ class Formula(models.Model):
         return f"{self.test_method.name} ({self.get_pressure_display()}) v{self.version}"
 
     def same_calculation(self, other):
-        return other is not None and (self.expression, self.inputs, self.result_unit, self.decimals) == (
-            other.expression, other.inputs, other.result_unit, other.decimals
-        )
+        fields = ("expression", "inputs", "result_unit", "decimals", "report_limit")
+        return other is not None and all(getattr(self, f) == getattr(other, f) for f in fields)
+
+    @property
+    def sample_variables(self):
+        """Values the formula takes from the sample rather than from typed inputs."""
+        return sorted(formulas.names_used(self.expression) & set(formulas.SAMPLE_VARIABLES))
 
     @property
     def input_names(self):
@@ -173,28 +187,58 @@ class Formula(models.Model):
     def clean(self):
         from django.core.exceptions import ValidationError
 
+        allowed = [*self.input_names, *formulas.SAMPLE_VARIABLES]
         try:
-            formulas.validate(self.expression, self.input_names)
+            formulas.validate(self.expression, allowed)
         except formulas.FormulaError as exc:
             raise ValidationError({"expression": str(exc)}) from exc
+        if self.report_limit.strip():
+            try:
+                formulas.validate(self.report_limit, allowed)
+            except formulas.FormulaError as exc:
+                raise ValidationError({"report_limit": str(exc)}) from exc
 
-    def calculate(self, values):
-        return formulas.evaluate(self.expression, {n: values.get(n) for n in self.input_names})
+    def _values(self, values, sample_values):
+        merged = {n: values.get(n) for n in self.input_names}
+        needed = formulas.names_used(self.expression) | formulas.names_used(self.report_limit)
+        for name in needed & set(formulas.SAMPLE_VARIABLES):
+            merged[name] = (sample_values or {}).get(name)
+        return merged
+
+    def calculate(self, values, sample_values=None):
+        return formulas.evaluate(self.expression, self._values(values, sample_values))
+
+    def reporting_limit(self, values, sample_values=None):
+        """The reporting limit for these inputs, or None."""
+        if not self.report_limit.strip():
+            return None
+        return formulas.evaluate(self.report_limit, self._values(values, sample_values))
 
 
 # --- Blends, calibrations, verifications ------------------------------------
 
 
 class Blend(models.Model):
+    RULE_POINTS = "points"
+    RULE_PERCENT = "percent"
+    RULE_CHOICES = [
+        (RULE_POINTS, "± percentage points (the GC workbook's “Ref Error”)"),
+        (RULE_PERCENT, "% error (|calculated − theoretical| ÷ theoretical × 100)"),
+    ]
+
     name = models.CharField(max_length=50, unique=True)
     description = models.CharField(max_length=200, blank=True)
     active = models.BooleanField(default=True)
-    max_error_percent = models.FloatField(
-        "allowed verification error (%)",
+    verification_rule = models.CharField(max_length=10, choices=RULE_CHOICES, default=RULE_POINTS)
+    verification_limit = models.FloatField(
+        "allowed verification error",
         null=True,
         blank=True,
-        help_text="A verification passes when every component's % error "
-        "(|calculated − theoretical| ÷ theoretical × 100) is at or below this.",
+        help_text="Each component must be within this of the standard: percentage points "
+        "(e.g. 0.3049) or % error, depending on the rule.",
+    )
+    verification_valid_days = models.PositiveSmallIntegerField(
+        default=7, help_text="How long a passing verification lets the calibration be used."
     )
 
     class Meta:
@@ -202,6 +246,12 @@ class Blend(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def limit_display(self):
+        if self.verification_limit is None:
+            return ""
+        return format_limit(self.verification_rule, self.verification_limit)
 
     @classmethod
     def matching(cls, refrigerant_type):
@@ -215,15 +265,21 @@ class Blend(models.Model):
         return None
 
     def active_calibration(self, on=None):
-        """Latest unexpired calibration of this blend with a passing verification."""
+        """Latest unexpired calibration whose latest verification passed and is still current."""
         on = on or timezone.localdate()
         candidates = self.calibrations.filter(performed_on__lte=on, expires_on__gte=on).order_by(
             "-performed_on", "-id"
         )
         for calibration in candidates:
-            if calibration.is_verified:
+            if calibration.is_usable(on):
                 return calibration
         return None
+
+
+def format_limit(rule, limit):
+    if rule == Blend.RULE_PERCENT:
+        return f"{limit:g}% error"
+    return f"±{limit:g} points"
 
 
 class BlendComponent(models.Model):
@@ -242,15 +298,122 @@ class BlendComponent(models.Model):
         return f"{self.blend.name}: {self.name}"
 
 
+def rsd_percent(values):
+    """Relative standard deviation (sample), % – Excel's STDEV ÷ AVERAGE × 100."""
+    values = [v for v in values if v is not None]
+    if len(values) < 2:
+        return None
+    mean = statistics.mean(values)
+    return statistics.stdev(values) / mean * 100 if mean else None
+
+
+# --- Standard cylinders --------------------------------------------------------
+
+
+class StandardCylinder(models.Model):
+    """
+    A gravimetric standard (the Standard Log on each blend sheet of the GC
+    workbook): composition = each component's mass ÷ the total mass.
+    """
+
+    STATUS_ON_HAND = "on_hand"
+    STATUS_USED = "used"
+    STATUS_DISPOSED = "disposed"
+    STATUS_CHOICES = [
+        (STATUS_ON_HAND, "On hand – in rack"),
+        (STATUS_USED, "Disposed – used for cal/ver"),
+        (STATUS_DISPOSED, "Disposed"),
+    ]
+    REPLACE_BELOW = 0.6  # flag for replacement below 60% remaining
+
+    blend = models.ForeignKey(Blend, on_delete=models.PROTECT, related_name="standards")
+    code = models.CharField("std. code", max_length=50, unique=True, help_text="e.g. R-454B-080626-A")
+    prepared_on = models.DateField("date prepared", default=timezone.localdate)
+    prepared_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ON_HAND)
+    cylinder_gross_g = models.FloatField("cylinder gross (g)", null=True, blank=True)
+    cylinder_tare_g = models.FloatField("cylinder tare (g)", null=True, blank=True)
+    full_fill_g = models.FloatField(
+        "full fill (g)",
+        null=True,
+        blank=True,
+        help_text="Refrigerant mass when the cylinder is full, for the remaining-refrigerant check.",
+    )
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-prepared_on", "-id"]
+
+    def __str__(self):
+        return self.code
+
+    def get_absolute_url(self):
+        return reverse("lab:standard_edit", args=[self.pk])
+
+    @property
+    def expires_on(self):
+        return self.prepared_on + datetime.timedelta(days=settings.STANDARD_VALID_DAYS)
+
+    def is_usable(self, on=None):
+        on = on or timezone.localdate()
+        return self.status == self.STATUS_ON_HAND and self.prepared_on <= on <= self.expires_on
+
+    def composition(self):
+        """{BlendComponent id: mass %}."""
+        rows = list(self.components.all())
+        total = sum(r.mass_g for r in rows)
+        return {r.component_id: (r.mass_g / total * 100 if total else 0.0) for r in rows}
+
+    @property
+    def remaining_fraction(self):
+        if None in (self.cylinder_gross_g, self.cylinder_tare_g) or not self.full_fill_g:
+            return None
+        return (self.cylinder_gross_g - self.cylinder_tare_g) / self.full_fill_g
+
+    @property
+    def needs_replacing(self):
+        remaining = self.remaining_fraction
+        return remaining is not None and remaining < self.REPLACE_BELOW
+
+
+class StandardComponent(models.Model):
+    cylinder = models.ForeignKey(StandardCylinder, on_delete=models.CASCADE, related_name="components")
+    component = models.ForeignKey(BlendComponent, on_delete=models.PROTECT)
+    mass_g = models.FloatField("mass (g)")
+
+    class Meta:
+        ordering = ["component__order", "component__name"]
+        constraints = [
+            models.UniqueConstraint(fields=["cylinder", "component"], name="unique_standard_component")
+        ]
+
+
+# --- Calibrations ----------------------------------------------------------------
+
+
 class Calibration(models.Model):
     STATUS_ACTIVE = "active"
     STATUS_UNVERIFIED = "unverified"
     STATUS_FAILED = "failed"
+    STATUS_REVERIFY = "reverify"
     STATUS_EXPIRED = "expired"
+    STATUS_LABELS = {
+        STATUS_ACTIVE: "Active",
+        STATUS_UNVERIFIED: "Not verified",
+        STATUS_FAILED: "Verification failed",
+        STATUS_REVERIFY: "Verification expired",
+        STATUS_EXPIRED: "Expired",
+    }
 
     blend = models.ForeignKey(Blend, on_delete=models.PROTECT, related_name="calibrations")
+    standard = models.ForeignKey(
+        StandardCylinder, null=True, blank=True, on_delete=models.PROTECT, related_name="calibrations"
+    )
     standard_cylinder = models.CharField(
-        max_length=50, help_text="Standard cylinder ID (from the inventory system)."
+        max_length=50, help_text="Standard cylinder code (filled in from the standard)."
     )
     performed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="calibrations"
@@ -286,6 +449,17 @@ class Calibration(models.Model):
         latest = self.latest_verification
         return latest is not None and latest.passed
 
+    def is_usable(self, on=None):
+        """Not expired, and the latest verification passed and is still current."""
+        on = on or timezone.localdate()
+        latest = self.latest_verification
+        return (
+            self.performed_on <= on <= self.expires_on
+            and latest is not None
+            and latest.passed
+            and latest.is_current(on)
+        )
+
     @property
     def status(self):
         if self.is_expired:
@@ -293,11 +467,38 @@ class Calibration(models.Model):
         latest = self.latest_verification
         if latest is None:
             return self.STATUS_UNVERIFIED
-        return self.STATUS_ACTIVE if latest.passed else self.STATUS_FAILED
+        if not latest.passed:
+            return self.STATUS_FAILED
+        if not latest.is_current():
+            return self.STATUS_REVERIFY
+        return self.STATUS_ACTIVE
+
+    @property
+    def status_label(self):
+        return self.STATUS_LABELS[self.status]
 
     @property
     def days_until_expiry(self):
         return (self.expires_on - timezone.localdate()).days
+
+    def component_rows(self):
+        components = list(self.components.select_related("component"))
+        reference = components[-1].response_factor if components else None
+        for c in components:
+            c.relative_response_factor = c.response_factor / reference if reference else None
+        return components
+
+    def replicate_compositions(self):
+        """Each run's areas worked out as a composition with this calibration: [[%, ...] per run]."""
+        components = list(self.components.all())
+        runs = []
+        for field in ("area_run1", "area_run2", "area_run3"):
+            raw = [getattr(c, field) * c.response_factor for c in components]
+            try:
+                runs.append(normalized_percents(raw))
+            except ValueError:
+                runs.append([0.0] * len(raw))
+        return runs
 
 
 class CalibrationComponent(models.Model):
@@ -317,12 +518,20 @@ class CalibrationComponent(models.Model):
         return f"{self.calibration}: {self.component.name}"
 
     @property
+    def areas(self):
+        return [self.area_run1, self.area_run2, self.area_run3]
+
+    @property
     def mean_area(self):
-        return (self.area_run1 + self.area_run2 + self.area_run3) / 3
+        return sum(self.areas) / 3
+
+    @property
+    def rsd_percent(self):
+        return rsd_percent(self.areas)
 
     @property
     def response_factor(self):
-        """Mass % per unit of peak area."""
+        """Mass % per unit of peak area (the workbook's ARF, × 100)."""
         return self.standard_percent / self.mean_area
 
 
@@ -336,13 +545,23 @@ def normalized_percents(raw):
 
 class Verification(models.Model):
     calibration = models.ForeignKey(Calibration, on_delete=models.CASCADE, related_name="verifications")
-    # The blend's allowed % error when this verification was run, so changing it later
-    # doesn't change past results. Empty on verifications from before % error was used:
-    # those keep the old rule (unnormalized, within ±VERIFICATION_TOLERANCE points).
-    max_error_percent = models.FloatField("allowed error (%)", null=True, blank=True, editable=False)
+    standard = models.ForeignKey(
+        StandardCylinder, null=True, blank=True, on_delete=models.PROTECT, related_name="verifications"
+    )
+    # The blend's rule and limit when this verification was run, so changing them later doesn't
+    # change past results. Empty on verifications from before rules were stored: those keep the
+    # original rule (unnormalized, within ±VERIFICATION_TOLERANCE points).
+    rule = models.CharField(max_length=10, choices=Blend.RULE_CHOICES, blank=True, editable=False)
+    limit = models.FloatField(null=True, blank=True, editable=False)
+    expires_on = models.DateField(null=True, blank=True, editable=False)
     standard_cylinder = models.CharField(max_length=50, blank=True)
     performed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     performed_on = models.DateField(default=timezone.localdate)
+    purity = models.FloatField("purity (%)", null=True, blank=True, help_text="Recorded only.")
+    air_area = models.FloatField("air area (µV)", null=True, blank=True)
+    air_rt = models.FloatField("air RT (min)", null=True, blank=True)
+    co2_area = models.FloatField("CO₂ area (µV)", null=True, blank=True)
+    co2_rt = models.FloatField("CO₂ RT (min)", null=True, blank=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(default=timezone.now)
 
@@ -352,16 +571,32 @@ class Verification(models.Model):
     def __str__(self):
         return f"Verification of {self.calibration} on {self.performed_on:%Y-%m-%d}"
 
+    def save(self, *args, **kwargs):
+        if self.expires_on is None:
+            days = self.calibration.blend.verification_valid_days
+            self.expires_on = self.performed_on + datetime.timedelta(days=days)
+        super().save(*args, **kwargs)
+
+    def is_current(self, on=None):
+        on = on or timezone.localdate()
+        return self.expires_on is None or on <= self.expires_on
+
     @property
-    def uses_percent_error(self):
-        return self.max_error_percent is not None
+    def is_legacy(self):
+        return not self.rule
+
+    @property
+    def limit_display(self):
+        if self.is_legacy:
+            return f"±{settings.VERIFICATION_TOLERANCE:g} points, not normalized (older verification)"
+        return format_limit(self.rule, self.limit)
 
     @cached_property
     def calculated_percents(self):
         """Calculated % per VerificationComponent id."""
         components = list(self.components.select_related("calibration_component"))
         raw = [c.raw_percent for c in components]
-        if self.uses_percent_error:
+        if not self.is_legacy:
             try:
                 raw = normalized_percents(raw)
             except ValueError:
@@ -386,6 +621,7 @@ class VerificationComponent(models.Model):
     calibration_component = models.ForeignKey(CalibrationComponent, on_delete=models.PROTECT)
     theoretical_percent = models.FloatField()
     peak_area = models.FloatField()
+    retention_time = models.FloatField("RT (min)", null=True, blank=True)
 
     class Meta:
         ordering = ["calibration_component__component__order"]
@@ -412,9 +648,173 @@ class VerificationComponent(models.Model):
     @property
     def passed(self):
         # Small epsilon so an error of exactly the limit is not failed by float rounding.
-        if self.verification.uses_percent_error:
-            return self.percent_error <= self.verification.max_error_percent + 1e-9
-        return abs(self.difference) <= settings.VERIFICATION_TOLERANCE + 1e-9
+        v = self.verification
+        if v.is_legacy:
+            return abs(self.difference) <= settings.VERIFICATION_TOLERANCE + 1e-9
+        if v.rule == Blend.RULE_PERCENT:
+            return self.percent_error <= v.limit + 1e-9
+        return abs(self.difference) <= v.limit + 1e-9
+
+
+# --- Non-condensables ------------------------------------------------------------
+
+
+class NCCalibration(models.Model):
+    """
+    Non-condensables (the GC workbook's NC sheet): replicate injections of a
+    nitrogen-in-helium standard give the peak area for 1.00% N2.
+    """
+
+    performed_on = models.DateField(default=timezone.localdate)
+    performed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    standard_name = models.CharField("standard used", max_length=100, default="Nitrogen in Helium")
+    lot_number = models.CharField("lot #", max_length=50, blank=True)
+    n2_percent = models.FloatField("% nitrogen in standard")
+    areas = models.JSONField(default=list, help_text="Replicate peak areas (µV).")
+    baseline_air_peak = models.FloatField("baseline air peak (µV)", null=True, blank=True)
+    expires_on = models.DateField(editable=False)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-performed_on", "-id"]
+
+    def __str__(self):
+        return f"Non-condensables calibration {self.performed_on:%Y-%m-%d}"
+
+    def save(self, *args, **kwargs):
+        self.expires_on = add_months(self.performed_on, settings.CALIBRATION_VALID_MONTHS)
+        super().save(*args, **kwargs)
+
+    def get_absolute_url(self):
+        return reverse("lab:nc_calibration_detail", args=[self.pk])
+
+    @property
+    def mean_area(self):
+        return statistics.mean(self.areas)
+
+    @property
+    def rsd_percent(self):
+        return rsd_percent(self.areas)
+
+    @property
+    def area_per_percent(self):
+        """Peak area for 1.00% N2."""
+        return self.mean_area / self.n2_percent
+
+    def result_percent(self, areas):
+        return statistics.mean(areas) / self.area_per_percent
+
+    @property
+    def latest_verification(self):
+        return self.verifications.order_by("-performed_on", "-id").first()
+
+    @property
+    def is_expired(self):
+        return self.expires_on < timezone.localdate()
+
+    def is_usable(self, on=None):
+        on = on or timezone.localdate()
+        latest = self.latest_verification
+        return (
+            self.performed_on <= on <= self.expires_on
+            and latest is not None
+            and latest.passed
+            and latest.is_current(on)
+        )
+
+    @property
+    def status(self):
+        if self.is_expired:
+            return Calibration.STATUS_EXPIRED
+        latest = self.latest_verification
+        if latest is None:
+            return Calibration.STATUS_UNVERIFIED
+        if not latest.passed:
+            return Calibration.STATUS_FAILED
+        if not latest.is_current():
+            return Calibration.STATUS_REVERIFY
+        return Calibration.STATUS_ACTIVE
+
+    @property
+    def status_label(self):
+        return Calibration.STATUS_LABELS[self.status]
+
+    @classmethod
+    def active(cls, on=None):
+        on = on or timezone.localdate()
+        for calibration in cls.objects.filter(performed_on__lte=on, expires_on__gte=on):
+            if calibration.is_usable(on):
+                return calibration
+        return None
+
+
+class NCVerification(models.Model):
+    calibration = models.ForeignKey(NCCalibration, on_delete=models.CASCADE, related_name="verifications")
+    performed_on = models.DateField(default=timezone.localdate)
+    performed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    standard_name = models.CharField("standard used", max_length=100, default="Nitrogen in Helium")
+    lot_number = models.CharField("lot #", max_length=50, blank=True)
+    n2_percent = models.FloatField("% nitrogen in standard")
+    areas = models.JSONField(default=list, help_text="Replicate peak areas (µV).")
+    max_error_percent = models.FloatField("allowed % error")
+    expires_on = models.DateField(editable=False)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-performed_on", "-id"]
+
+    def save(self, *args, **kwargs):
+        self.expires_on = self.performed_on + datetime.timedelta(days=settings.NC_VERIFICATION_VALID_DAYS)
+        super().save(*args, **kwargs)
+
+    def is_current(self, on=None):
+        return (on or timezone.localdate()) <= self.expires_on
+
+    @property
+    def result_percent(self):
+        return self.calibration.result_percent(self.areas)
+
+    @property
+    def percent_error(self):
+        """(result − standard) ÷ standard × 100, as in the workbook (signed)."""
+        return (self.result_percent - self.n2_percent) / self.n2_percent * 100
+
+    @property
+    def rsd_percent(self):
+        return rsd_percent(self.areas)
+
+    @property
+    def passed(self):
+        return abs(self.percent_error) <= self.max_error_percent + 1e-9
+
+
+# --- Refrigerant properties ------------------------------------------------------
+
+
+class RefrigerantDensity(models.Model):
+    """Liquid densities used by formulas as ``refrigerant_density`` (the Master sheet's HBR Data)."""
+
+    refrigerant = models.CharField(max_length=50, unique=True)
+    density_g_cc = models.FloatField("density (g/cc)")
+
+    class Meta:
+        ordering = ["refrigerant"]
+        verbose_name_plural = "refrigerant densities"
+
+    def __str__(self):
+        return f"{self.refrigerant}: {self.density_g_cc} g/cc"
+
+    @classmethod
+    def lookup(cls, refrigerant_type):
+        key = ChoiceOption.name_key(refrigerant_type)
+        if not key:
+            return None
+        for row in cls.objects.all():
+            if ChoiceOption.name_key(row.refrigerant) == key:
+                return row.density_g_cc
+        return None
 
 
 # --- Intake form dropdowns ---------------------------------------------------
@@ -657,6 +1057,7 @@ class SampleTest(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
     # Calibration used for blend analysis results.
     calibration = models.ForeignKey(Calibration, null=True, blank=True, on_delete=models.PROTECT)
+    nc_calibration = models.ForeignKey(NCCalibration, null=True, blank=True, on_delete=models.PROTECT)
 
     class Meta:
         ordering = ["test_method__display_order"]
@@ -696,7 +1097,9 @@ class TestResult(models.Model):
     label = models.CharField(max_length=100, blank=True, help_text="Component name for blend results.")
     order = models.PositiveSmallIntegerField(default=0)
     value = models.FloatField(null=True, blank=True)
-    text_value = models.CharField(max_length=200, blank=True, help_text="For non-numeric results.")
+    text_value = models.CharField(
+        max_length=200, blank=True, help_text="Non-numeric results, or what is reported, e.g. <0.01."
+    )
     unit = models.CharField(max_length=30, blank=True)
     decimals = models.PositiveSmallIntegerField(default=2)
     inputs = models.JSONField(default=dict, blank=True)
@@ -714,7 +1117,7 @@ class TestResult(models.Model):
 
     @property
     def display_value(self):
-        if self.value is None:
+        if self.text_value or self.value is None:
             return self.text_value
         return f"{self.value:.{self.decimals}f}"
 

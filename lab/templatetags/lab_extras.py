@@ -29,6 +29,12 @@ def get(mapping, key):
 
 
 @register.filter
+def getfield(form, name):
+    """{{ form|getfield:name }} – a form's bound field by a variable name."""
+    return form[name]
+
+
+@register.filter
 def num(value, decimals=4):
     """Format a float without trailing noise; blank for None."""
     if value is None:
@@ -41,6 +47,14 @@ def signed(value, decimals=4):
     if value is None:
         return ""
     return f"{value:+.{int(decimals)}f}"
+
+
+@register.filter
+def percent(fraction, decimals=0):
+    """0.642 -> "64%"; blank for None."""
+    if fraction is None:
+        return ""
+    return f"{fraction * 100:.{int(decimals)}f}%"
 
 
 @register.filter

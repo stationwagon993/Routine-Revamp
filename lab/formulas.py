@@ -5,8 +5,10 @@ Formulas are plain arithmetic expressions such as
 
     (V_sample - V_blank) * normality * 56.1 / mass_g
 
-They are parsed with Python's ``ast`` module and only a small whitelist of
-node types is evaluated, so a formula can never run arbitrary code.
+Comparisons and ``a if condition else b`` are allowed too (e.g. a reporting
+limit of ``0.05 if mass_g < 5 else 0.01``). They are parsed with Python's
+``ast`` module and only a small whitelist of node types is evaluated, so a
+formula can never run arbitrary code.
 """
 
 import ast
@@ -27,6 +29,20 @@ FUNCTIONS = {
 CONSTANTS = {
     "pi": math.pi,
     "e": math.e,
+}
+
+# Values a formula can use without declaring them as inputs: they come from the sample.
+SAMPLE_VARIABLES = {
+    "refrigerant_density": "Liquid density of the sample's refrigerant (g/cc), from Admin → Refrigerant densities",
+}
+
+_COMPARE_OPS = {
+    ast.Lt: operator.lt,
+    ast.LtE: operator.le,
+    ast.Gt: operator.gt,
+    ast.GtE: operator.ge,
+    ast.Eq: operator.eq,
+    ast.NotEq: operator.ne,
 }
 
 _BIN_OPS = {
@@ -59,6 +75,14 @@ def _parse(expression):
         raise FormulaError(f"Formula is not valid: {exc.msg}.") from exc
 
 
+def names_used(expression):
+    """Variable names in an expression; empty for a blank or invalid one."""
+    try:
+        return _names_used(_parse(expression))
+    except FormulaError:
+        return set()
+
+
 def _names_used(tree):
     """Variable names in the expression (function names excluded)."""
     called = {
@@ -81,7 +105,11 @@ def _check_nodes(tree):
             continue
         if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY_OPS:
             continue
-        if type(node) in _BIN_OPS or type(node) in _UNARY_OPS:
+        if type(node) in _BIN_OPS or type(node) in _UNARY_OPS or type(node) in _COMPARE_OPS:
+            continue
+        if isinstance(node, ast.Compare) and all(type(op) in _COMPARE_OPS for op in node.ops):
+            continue
+        if isinstance(node, ast.IfExp):
             continue
         if isinstance(node, ast.Call):
             if not isinstance(node.func, ast.Name) or node.func.id not in FUNCTIONS:
@@ -127,6 +155,16 @@ def _eval(node, values):
     if isinstance(node, ast.Call):
         args = [_eval(arg, values) for arg in node.args]
         return FUNCTIONS[node.func.id](*args)
+    if isinstance(node, ast.Compare):
+        left = _eval(node.left, values)
+        for op, comparator in zip(node.ops, node.comparators):
+            right = _eval(comparator, values)
+            if not _COMPARE_OPS[type(op)](left, right):
+                return False
+            left = right
+        return True
+    if isinstance(node, ast.IfExp):
+        return _eval(node.body if _eval(node.test, values) else node.orelse, values)
     raise FormulaError("Unsupported expression.")
 
 
@@ -134,6 +172,8 @@ def evaluate(expression, values):
     """Evaluate the expression with the given {input_name: number} values."""
     numbers = {}
     for name, raw in values.items():
+        if raw is None and name in SAMPLE_VARIABLES:
+            raise FormulaError(f"No {name.replace('_', ' ')} is known for this sample. {SAMPLE_VARIABLES[name]}.")
         try:
             numbers[name] = float(raw)
         except (TypeError, ValueError) as exc:
@@ -148,6 +188,6 @@ def evaluate(expression, values):
         raise FormulaError("Division by zero.") from exc
     except (ValueError, OverflowError, TypeError) as exc:
         raise FormulaError(f"Calculation failed: {exc}.") from exc
-    if isinstance(result, complex) or not math.isfinite(result):
+    if isinstance(result, bool) or isinstance(result, complex) or not math.isfinite(result):
         raise FormulaError("Calculation did not give a real, finite number.")
     return float(result)

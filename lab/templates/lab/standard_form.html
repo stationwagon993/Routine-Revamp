@@ -1,0 +1,41 @@
+{% extends "lab/base.html" %}
+{% block title %}{% if standard %}{{ standard }}{% else %}New {{ blend }} standard{% endif %}{% endblock %}
+{% block content %}
+<div class="actions" style="margin-bottom: 8px;"><a href="{% url 'lab:standard_list' %}">← Standard log</a></div>
+<h1>{% if standard %}Standard {{ standard }}{% else %}New {{ blend }} standard{% endif %}</h1>
+<form method="post">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  <div class="panel">
+    <div class="form-grid">
+      {% include "lab/_field.html" with field=form.code %}
+      {% include "lab/_field.html" with field=form.prepared_on %}
+      {% include "lab/_field.html" with field=form.status %}
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Composition</h2>
+    <p class="muted">Mass of each component added to the cylinder. The composition used for calibrations and verifications is each mass ÷ the total.</p>
+    <table class="data">
+      <tr><th>Component</th><th>Mass (g)</th></tr>
+      {% for component, field in form.mass_rows %}
+      <tr><td>{{ component.name }}</td><td>{{ field }}{{ field.errors }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Cylinder</h2>
+    <p class="muted">Remaining = (gross − tare) ÷ full fill. Flagged for replacement below 60%.</p>
+    <div class="form-grid">
+      {% include "lab/_field.html" with field=form.cylinder_gross_g %}
+      {% include "lab/_field.html" with field=form.cylinder_tare_g %}
+      {% include "lab/_field.html" with field=form.full_fill_g %}
+      {% include "lab/_field.html" with field=form.notes wide=True %}
+    </div>
+  </div>
+  <div class="actions">
+    <button type="submit">Save</button>
+    <a href="{% url 'lab:standard_list' %}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

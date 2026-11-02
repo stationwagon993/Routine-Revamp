@@ -4,7 +4,16 @@ from django.db import transaction
 from django.utils import timezone
 
 from . import formulas
-from .models import Formula, Report, SampleTest, TestMethod, TestResult, normalized_percents
+from .models import (
+    Formula,
+    NCCalibration,
+    RefrigerantDensity,
+    Report,
+    SampleTest,
+    TestMethod,
+    TestResult,
+    normalized_percents,
+)
 
 # Tracking test that is completed automatically when a report is sent.
 RESULTS_REPORTED = "Results Reported"
@@ -40,11 +49,20 @@ def blend_results(calibration, areas):
     return list(zip(components, peak_areas, percents))
 
 
-def calculate_formula(formula, values):
+def sample_values(sample):
+    """Values formulas take from the sample (see formulas.SAMPLE_VARIABLES)."""
+    return {"refrigerant_density": RefrigerantDensity.lookup(sample.refrigerant_type)}
+
+
+def calculate_formula(formula, values, sample_values=None):
+    """(value, text reported instead or "") – e.g. "<0.01" at or below the reporting limit."""
     try:
-        return formula.calculate(values)
+        value = formula.calculate(values, sample_values)
+        limit = formula.reporting_limit(values, sample_values)
     except formulas.FormulaError as exc:
         raise ResultError(str(exc)) from exc
+    reported = f"<{limit:g}" if limit is not None and value <= limit else ""
+    return value, reported
 
 
 def compute_results(sample_test, data):
@@ -60,12 +78,22 @@ def compute_results(sample_test, data):
         except (Formula.DoesNotExist, ValueError) as exc:
             raise ResultError("No formula is set up for this test.") from exc
         values = {name: data.get(f"input_{name}") for name in formula.input_names}
-        value = calculate_formula(formula, values)
+        sample = sample_test.sample
+        from_sample = sample_values(sample)
+        if "refrigerant_density" in formula.sample_variables and from_sample["refrigerant_density"] is None:
+            raise ResultError(
+                f"No liquid density is set up for {sample.refrigerant_type or 'this sample (no refrigerant type)'}. "
+                "Add it under Admin → Refrigerant densities."
+            )
+        value, reported = calculate_formula(formula, values, from_sample)
+        inputs = {k: float(v) for k, v in values.items()}
+        inputs.update({k: v for k, v in from_sample.items() if k in formula.sample_variables})
         result = TestResult(
             value=value,
+            text_value=reported,
             unit=formula.result_unit,
             decimals=formula.decimals,
-            inputs={k: float(v) for k, v in values.items()},
+            inputs=inputs,
             formula=formula,
         )
         return [result], None
@@ -103,6 +131,32 @@ def compute_results(sample_test, data):
         ]
         return results, calibration
 
+    if method.calc_type == TestMethod.CALC_NC:
+        calibration = NCCalibration.active()
+        if calibration is None:
+            raise ResultError(
+                "There is no current, verified non-condensables calibration. "
+                "Calibrate and verify before reporting non-condensables."
+            )
+        areas = []
+        for key in sorted(k for k in data if k.startswith("nc_area_")):
+            raw = (data.get(key) or "").strip()
+            if not raw:
+                continue
+            try:
+                areas.append(float(raw))
+            except ValueError as exc:
+                raise ResultError("Peak areas must be numbers.") from exc
+        if not areas:
+            raise ResultError("Enter the replicate peak areas.")
+        result = TestResult(
+            value=calibration.result_percent(areas),
+            unit="%",
+            decimals=4,
+            inputs={"areas": areas, "area_per_percent": calibration.area_per_percent},
+        )
+        return [result], calibration
+
     if method.calc_type == TestMethod.CALC_MANUAL:
         raw = (data.get("manual_value") or "").strip()
         if not raw:
@@ -128,7 +182,10 @@ def save_results(sample_test, user, data):
         result.sample_test = sample_test
         result.entered_by = user
         result.save()
-    sample_test.calibration = calibration
+    if isinstance(calibration, NCCalibration):
+        sample_test.nc_calibration, sample_test.calibration = calibration, None
+    else:
+        sample_test.calibration, sample_test.nc_calibration = calibration, None
     sample_test.set_status(SampleTest.STATUS_COMPLETED, user)
     return results
 

@@ -1,6 +1,9 @@
 import re
 
 from django import forms
+from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
 
 from . import formulas
 from .models import (
@@ -8,8 +11,12 @@ from .models import (
     Calibration,
     ChoiceOption,
     Formula,
+    NCCalibration,
+    NCVerification,
     Report,
     Sample,
+    StandardComponent,
+    StandardCylinder,
     TestMethod,
     Verification,
 )
@@ -223,12 +230,76 @@ def _kind(cleaned):
     return cleaned.get("sample_type") or ""
 
 
+class StandardCylinderForm(forms.ModelForm):
+    """A gravimetric standard: the mass of each component, as in the GC workbook's Standard Log."""
+
+    class Meta:
+        model = StandardCylinder
+        fields = ["code", "prepared_on", "status", "cylinder_gross_g", "cylinder_tare_g", "full_fill_g", "notes"]
+        widgets = {
+            "prepared_on": forms.DateInput(attrs={"type": "date"}),
+            "notes": forms.Textarea(attrs={"rows": 2}),
+        }
+
+    def __init__(self, *args, blend, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.blend = blend
+        masses = {}
+        if self.instance.pk:
+            masses = {c.component_id: c.mass_g for c in self.instance.components.all()}
+        self.mass_rows = []
+        for component in blend.components.all():
+            name = f"mass_{component.pk}"
+            self.fields[name] = forms.FloatField(min_value=0, initial=masses.get(component.pk))
+            self.mass_rows.append((component, self[name]))
+
+    def clean(self):
+        cleaned = super().clean()
+        masses = [cleaned.get(f"mass_{c.pk}") for c, _ in self.mass_rows]
+        if all(m is not None for m in masses) and sum(masses) <= 0:
+            raise forms.ValidationError("Enter the mass of each component.")
+        return cleaned
+
+    @transaction.atomic
+    def save(self, user=None):
+        standard = super().save(commit=False)
+        standard.blend = self.blend
+        if user is not None and standard.prepared_by_id is None:
+            standard.prepared_by = user
+        standard.save()
+        for component, _ in self.mass_rows:
+            StandardComponent.objects.update_or_create(
+                cylinder=standard,
+                component=component,
+                defaults={"mass_g": self.cleaned_data[f"mass_{component.pk}"]},
+            )
+        return standard
+
+
+def _standard_choices(blend, on=None):
+    """Standards of the blend that are on hand and not past their 7 days."""
+    on = on or timezone.localdate()
+    ids = [s.pk for s in blend.standards.filter(status=StandardCylinder.STATUS_ON_HAND) if s.is_usable(on)]
+    return StandardCylinder.objects.filter(pk__in=ids)
+
+
+def _check_standard(form, field, standard, performed_on):
+    if standard and performed_on and not standard.is_usable(performed_on):
+        form.add_error(
+            field,
+            f"{standard} can't be used on {performed_on:%m/%d/%Y}: standards are good for "
+            f"{settings.STANDARD_VALID_DAYS} days after they're prepared and must be on hand.",
+        )
+
+
 class CalibrationForm(forms.ModelForm):
-    """Calibration header plus standard % and three run areas per blend component."""
+    """Three runs of a gravimetric standard; its composition comes from the standard log."""
+
+    standard = forms.ModelChoiceField(queryset=StandardCylinder.objects.none(), label="Calibration standard")
 
     class Meta:
         model = Calibration
-        fields = ["standard_cylinder", "performed_on", "notes"]
+        fields = ["standard", "performed_on", "notes"]
         widgets = {
             "performed_on": forms.DateInput(attrs={"type": "date"}),
             "notes": forms.Textarea(attrs={"rows": 2}),
@@ -237,36 +308,44 @@ class CalibrationForm(forms.ModelForm):
     def __init__(self, *args, blend, **kwargs):
         super().__init__(*args, **kwargs)
         self.blend = blend
+        self.fields["standard"].queryset = blend.standards.all()
+        self.fields["standard"].help_text = "From the standard log. Must be on hand and within 7 days of preparation."
+        self.usable_standards = _standard_choices(blend)
         self.component_rows = []
         for component in blend.components.all():
-            keys = {
-                "percent": f"percent_{component.pk}",
-                "run1": f"run1_{component.pk}",
-                "run2": f"run2_{component.pk}",
-                "run3": f"run3_{component.pk}",
-            }
-            self.fields[keys["percent"]] = forms.FloatField(
-                min_value=0, max_value=100, initial=component.nominal_percent
-            )
-            for run in ("run1", "run2", "run3"):
-                self.fields[keys[run]] = forms.FloatField(min_value=0)
-            self.component_rows.append(
-                (component, [self[keys[k]] for k in ("percent", "run1", "run2", "run3")])
-            )
+            names = [f"run{i}_{component.pk}" for i in (1, 2, 3)]
+            for name in names:
+                self.fields[name] = forms.FloatField(min_value=0)
+            self.component_rows.append((component, [self[n] for n in names]))
 
     def clean(self):
         cleaned = super().clean()
+        standard = cleaned.get("standard")
+        _check_standard(self, "standard", standard, cleaned.get("performed_on"))
+        if standard:
+            composition = standard.composition()
+            missing = [c.name for c, _ in self.component_rows if c.pk not in composition]
+            if missing:
+                self.add_error("standard", f"{standard} has no mass for {', '.join(missing)}.")
         for component, _ in self.component_rows:
             runs = [cleaned.get(f"run{i}_{component.pk}") for i in (1, 2, 3)]
             if all(r is not None for r in runs) and sum(runs) == 0:
                 self.add_error(f"run1_{component.pk}", "Peak areas cannot all be zero.")
         return cleaned
 
+    def save(self, commit=True):
+        calibration = super().save(commit=False)
+        calibration.standard_cylinder = self.cleaned_data["standard"].code
+        if commit:
+            calibration.save()
+        return calibration
+
     def component_values(self):
+        composition = self.cleaned_data["standard"].composition()
         for component, _ in self.component_rows:
             pk = component.pk
             yield component, {
-                "standard_percent": self.cleaned_data[f"percent_{pk}"],
+                "standard_percent": composition[pk],
                 "area_run1": self.cleaned_data[f"run1_{pk}"],
                 "area_run2": self.cleaned_data[f"run2_{pk}"],
                 "area_run3": self.cleaned_data[f"run3_{pk}"],
@@ -274,42 +353,122 @@ class CalibrationForm(forms.ModelForm):
 
 
 class VerificationForm(forms.ModelForm):
+    """One run of a second standard; it passes when every component is within the blend's limit."""
+
+    standard = forms.ModelChoiceField(queryset=StandardCylinder.objects.none(), label="Verification standard")
+    verification_rule = forms.ChoiceField(
+        choices=[(Blend.RULE_POINTS, "± percentage points"), (Blend.RULE_PERCENT, "% error (relative)")],
+        label="Pass rule",
+    )
+    verification_limit = forms.FloatField(
+        min_value=0, label="Allowed error", help_text="Saved for the blend and used for its future verifications."
+    )
+
     class Meta:
         model = Verification
-        fields = ["standard_cylinder", "performed_on", "notes"]
+        fields = ["standard", "performed_on", "purity", "air_area", "air_rt", "co2_area", "co2_rt", "notes"]
         widgets = {
             "performed_on": forms.DateInput(attrs={"type": "date"}),
             "notes": forms.Textarea(attrs={"rows": 2}),
         }
 
-    max_error_percent = forms.FloatField(
-        label="Allowed % error",
-        min_value=0,
-        help_text="Saved for the blend and used for its future verifications.",
-    )
-
     def __init__(self, *args, calibration, **kwargs):
         super().__init__(*args, **kwargs)
         self.calibration = calibration
-        self.fields["standard_cylinder"].initial = calibration.standard_cylinder
-        self.fields["max_error_percent"].initial = calibration.blend.max_error_percent
+        blend = calibration.blend
+        self.fields["standard"].queryset = blend.standards.all()
+        self.fields["standard"].help_text = "Normally a different standard from the calibration's."
+        self.usable_standards = _standard_choices(blend)
+        self.fields["verification_rule"].initial = blend.verification_rule
+        self.fields["verification_limit"].initial = blend.verification_limit
         self.component_rows = []
         for cc in calibration.components.select_related("component"):
-            # % error is relative to the theoretical %, so it can't be zero.
-            self.fields[f"theoretical_{cc.pk}"] = forms.FloatField(
-                min_value=0.0001, max_value=100, initial=cc.standard_percent
-            )
             self.fields[f"area_{cc.pk}"] = forms.FloatField(min_value=0)
-            self.component_rows.append(
-                (cc, self[f"theoretical_{cc.pk}"], self[f"area_{cc.pk}"])
-            )
+            self.fields[f"rt_{cc.pk}"] = forms.FloatField(min_value=0, required=False)
+            self.component_rows.append((cc, self[f"area_{cc.pk}"], self[f"rt_{cc.pk}"]))
+
+    def clean(self):
+        cleaned = super().clean()
+        standard = cleaned.get("standard")
+        _check_standard(self, "standard", standard, cleaned.get("performed_on"))
+        if standard:
+            composition = standard.composition()
+            missing = [cc.component.name for cc, _, _ in self.component_rows if cc.component_id not in composition]
+            if missing:
+                self.add_error("standard", f"{standard} has no mass for {', '.join(missing)}.")
+        return cleaned
 
     def component_values(self):
+        composition = self.cleaned_data["standard"].composition()
         for cc, _, _ in self.component_rows:
             yield cc, {
-                "theoretical_percent": self.cleaned_data[f"theoretical_{cc.pk}"],
+                "theoretical_percent": composition[cc.component_id],
                 "peak_area": self.cleaned_data[f"area_{cc.pk}"],
+                "retention_time": self.cleaned_data.get(f"rt_{cc.pk}"),
             }
+
+
+def _area_fields(form, prefix, count, required):
+    names = []
+    for i in range(1, count + 1):
+        name = f"{prefix}{i}"
+        form.fields[name] = forms.FloatField(min_value=0, required=False, label=f"Replicate {i}")
+        names.append(name)
+    form.area_names = names
+    form.area_required = required
+
+
+def _clean_areas(form, cleaned):
+    areas = [cleaned.get(n) for n in form.area_names if cleaned.get(n) is not None]
+    if len(areas) < form.area_required:
+        raise forms.ValidationError(f"Enter at least {form.area_required} replicate peak areas.")
+    if sum(areas) <= 0:
+        raise forms.ValidationError("The peak areas add up to zero.")
+    return areas
+
+
+class NCCalibrationForm(forms.ModelForm):
+    class Meta:
+        model = NCCalibration
+        fields = ["performed_on", "standard_name", "lot_number", "n2_percent", "baseline_air_peak", "notes"]
+        widgets = {
+            "performed_on": forms.DateInput(attrs={"type": "date"}),
+            "notes": forms.Textarea(attrs={"rows": 2}),
+        }
+        help_texts = {"n2_percent": "e.g. 1.48 for a 1.48% N₂ standard."}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["n2_percent"].min_value = 0.000001
+        _area_fields(self, "area_", 10, 3)
+
+    def clean(self):
+        cleaned = super().clean()
+        self.instance.areas = _clean_areas(self, cleaned)
+        return cleaned
+
+
+class NCVerificationForm(forms.ModelForm):
+    class Meta:
+        model = NCVerification
+        fields = ["performed_on", "standard_name", "lot_number", "n2_percent", "max_error_percent", "notes"]
+        widgets = {
+            "performed_on": forms.DateInput(attrs={"type": "date"}),
+            "notes": forms.Textarea(attrs={"rows": 2}),
+        }
+        help_texts = {
+            "max_error_percent": "Passes when |result − standard| ÷ standard × 100 is at or below this.",
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["n2_percent"].min_value = 0.000001
+        _area_fields(self, "area_", 4, 2)
+
+    def clean(self):
+        cleaned = super().clean()
+        self.instance.areas = _clean_areas(self, cleaned)
+        return cleaned
 
 
 _INPUT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -333,15 +492,18 @@ class FormulaForm(forms.ModelForm):
 
     class Meta:
         model = Formula
-        fields = ["expression", "result_unit", "decimals", "notes"]
+        fields = ["expression", "result_unit", "decimals", "report_limit", "notes"]
         widgets = {
             "expression": forms.Textarea(attrs={"rows": 2, "class": "mono"}),
+            "report_limit": forms.TextInput(attrs={"class": "mono"}),
             "notes": forms.Textarea(attrs={"rows": 2}),
         }
         help_texts = {
             "expression": (
                 "Use the input names with + - * / ** ( ). Functions: "
                 + ", ".join(sorted(formulas.FUNCTIONS))
+                + ". From the sample (no input needed): "
+                + ", ".join(f"<code>{n}</code> ({d})" for n, d in formulas.SAMPLE_VARIABLES.items())
                 + "."
             )
         }

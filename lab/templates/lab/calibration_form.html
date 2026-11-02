@@ -6,17 +6,18 @@
   {% csrf_token %}
   {{ form.non_field_errors }}
   <div class="panel">
+    {% if not form.usable_standards %}<div class="banner-warn">No {{ blend }} standard is on hand and within {{ STANDARD_VALID_DAYS }} days of preparation. <a href="{% url 'lab:standard_create' %}?blend={{ blend.pk }}">Add a standard</a> first.</div>{% endif %}
     <div class="form-grid">
-      {% include "lab/_field.html" with field=form.standard_cylinder %}
+      {% include "lab/_field.html" with field=form.standard %}
       {% include "lab/_field.html" with field=form.performed_on %}
       {% include "lab/_field.html" with field=form.notes wide=True %}
     </div>
   </div>
   <div class="panel">
     <h2>Peak areas</h2>
-    <p class="muted">Enter the standard's composition and the peak area from each of the three GC runs. The response factor for each component is its standard % ÷ mean peak area.</p>
+    <p class="muted">Three runs of the calibration standard. Its composition comes from the component masses in the standard log. Response factor = standard % ÷ average area; %RSD of the runs is shown on the next page.</p>
     <table class="data">
-      <tr><th>Component</th><th>Standard %</th><th>Run 1 area</th><th>Run 2 area</th><th>Run 3 area</th></tr>
+      <tr><th>Component</th><th>Run 1 area (µV)</th><th>Run 2 area (µV)</th><th>Run 3 area (µV)</th></tr>
       {% for component, fields in form.component_rows %}
       <tr>
         <td>{{ component.name }}</td>

@@ -1,0 +1,54 @@
+{% extends "lab/base.html" %}
+{% load lab_extras %}
+{% block title %}{{ calibration }}{% endblock %}
+{% block content %}
+<div class="actions" style="margin-bottom: 8px;"><a href="{% url 'lab:calibration_list' %}">← Calibrations</a></div>
+<h1>Non-condensables calibration – {{ calibration.performed_on|date:"m/d/Y" }} <span class="pill {{ calibration.status }}">{{ calibration.status_label }}</span></h1>
+{% if calibration.status == "unverified" or calibration.status == "failed" or calibration.status == "reverify" %}<div class="banner-warn">Non-condensables results can't be entered until a verification passes. <a href="{% url 'lab:nc_verification_create' calibration.pk %}">Run verification</a></div>{% endif %}
+
+<div class="panel">
+  <dl class="info">
+    <dt>Calibrated by</dt><dd>{{ calibration.performed_by|person }}</dd>
+    <dt>Standard</dt><dd>{{ calibration.standard_name }}{% if calibration.lot_number %}, lot {{ calibration.lot_number }}{% endif %} – {{ calibration.n2_percent|floatformat:"-5" }}% N₂</dd>
+    <dt>Replicates</dt><dd>{% for a in calibration.areas %}{{ a|floatformat:"-2" }}{% if not forloop.last %}, {% endif %}{% endfor %}</dd>
+    {% if calibration.baseline_air_peak is not None %}<dt>Baseline air peak</dt><dd>{{ calibration.baseline_air_peak|floatformat:"-2" }} µV</dd>{% endif %}
+    <dt>Average area</dt><dd>{{ calibration.mean_area|num:2 }} µV (RSD {{ calibration.rsd_percent|num:2 }}%)</dd>
+    <dt>Area for 1.00% N₂</dt><dd>{{ calibration.area_per_percent|num:2 }} µV</dd>
+    <dt>Expires</dt><dd>{{ calibration.expires_on|date:"m/d/Y" }}</dd>
+    {% if calibration.notes %}<dt>Notes</dt><dd>{{ calibration.notes|linebreaksbr }}</dd>{% endif %}
+  </dl>
+</div>
+
+<div class="panel">
+  <div class="actions" style="justify-content: space-between;">
+    <h2>Verifications</h2>
+    {% if not calibration.is_expired %}<a class="btn small" href="{% url 'lab:nc_verification_create' calibration.pk %}">+ Run verification</a>{% endif %}
+  </div>
+  <table class="data">
+    <tr><th>Date</th><th>By</th><th>Standard % N₂</th><th>Replicates</th><th>RSD</th><th>Result % N₂</th><th>% error</th><th>Allowed</th><th>Good until</th><th></th></tr>
+    {% for v in verifications %}
+    <tr>
+      <td>{{ v.performed_on|date:"m/d/Y" }}</td>
+      <td>{{ v.performed_by|person }}</td>
+      <td class="num">{{ v.n2_percent|floatformat:"-5" }}</td>
+      <td>{% for a in v.areas %}{{ a|floatformat:"-2" }}{% if not forloop.last %}, {% endif %}{% endfor %}</td>
+      <td class="num">{{ v.rsd_percent|num:2 }}%</td>
+      <td class="num">{{ v.result_percent|num:5 }}</td>
+      <td class="num">{{ v.percent_error|signed:2 }}%</td>
+      <td class="num">±{{ v.max_error_percent|floatformat:"-3" }}%</td>
+      <td>{{ v.expires_on|date:"m/d/Y" }}</td>
+      <td>{% if v.passed %}<span class="pill pass">Pass</span>{% else %}<span class="pill fail">Fail</span>{% endif %}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="10" class="muted">No verifications yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if samples %}
+<div class="panel">
+  <h2>Samples reported with this calibration</h2>
+  <p>{% for s in samples %}<a href="{{ s.get_absolute_url }}">{{ s.sample_number }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</p>
+</div>
+{% endif %}
+{% endblock %}

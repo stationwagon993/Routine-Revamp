@@ -3,17 +3,18 @@
 {% block title %}{{ calibration }}{% endblock %}
 {% block content %}
 <div class="actions" style="margin-bottom: 8px;"><a href="{% url 'lab:calibration_list' %}">← Calibrations</a></div>
-<h1>{{ calibration.blend }} calibration – {{ calibration.performed_on|date:"m/d/Y" }} <span class="pill {{ calibration.status }}">{{ calibration.status|capfirst }}</span></h1>
+<h1>{{ calibration.blend }} calibration – {{ calibration.performed_on|date:"m/d/Y" }} <span class="pill {{ calibration.status }}">{{ calibration.status_label }}</span></h1>
 
 {% if calibration.status == "unverified" %}<div class="banner-warn">This calibration can't be used for results until a verification passes. <a href="{% url 'lab:verification_create' calibration.pk %}">Run verification</a></div>{% endif %}
 {% if calibration.status == "failed" %}<div class="banner-warn">The latest verification failed. Run another verification or recalibrate.</div>{% endif %}
+{% if calibration.status == "reverify" %}<div class="banner-warn">The verification has expired ({{ calibration.blend }} verifications are good for {{ calibration.blend.verification_valid_days }} day{{ calibration.blend.verification_valid_days|pluralize }}). <a href="{% url 'lab:verification_create' calibration.pk %}">Verify again</a></div>{% endif %}
 
 <div class="panel">
   <dl class="info">
     <dt>Calibrated by</dt><dd>{{ calibration.performed_by|person }}</dd>
-    <dt>Standard cylinder</dt><dd>{{ calibration.standard_cylinder }}</dd>
+    <dt>Standard</dt><dd>{% if calibration.standard %}<a href="{{ calibration.standard.get_absolute_url }}">{{ calibration.standard }}</a>{% else %}{{ calibration.standard_cylinder }}{% endif %}</dd>
     <dt>Expires</dt><dd>{{ calibration.expires_on|date:"m/d/Y" }}</dd>
-    <dt>Allowed % error</dt><dd>{% if calibration.blend.max_error_percent is not None %}{{ calibration.blend.max_error_percent|floatformat:"-4" }}% <span class="muted">(set for {{ calibration.blend }}; changed when running a verification)</span>{% else %}<span class="muted">Not set yet – entered with the first verification.</span>{% endif %}</dd>
+    <dt>Verification rule</dt><dd>{{ calibration.blend.limit_display|default:"Not set yet – entered with the first verification" }}; good for {{ calibration.blend.verification_valid_days }} day{{ calibration.blend.verification_valid_days|pluralize }}</dd>
     {% if calibration.notes %}<dt>Notes</dt><dd>{{ calibration.notes|linebreaksbr }}</dd>{% endif %}
   </dl>
 </div>
@@ -21,7 +22,7 @@
 <div class="panel">
   <h2>Calibration runs</h2>
   <table class="data">
-    <tr><th>Component</th><th>Standard %</th><th>Run 1</th><th>Run 2</th><th>Run 3</th><th>Mean area</th><th>Response factor</th></tr>
+    <tr><th>Component</th><th>Standard %</th><th>Run 1</th><th>Run 2</th><th>Run 3</th><th>Average area</th><th>%RSD</th><th>Response factor</th><th>RRF</th></tr>
     {% for c in components %}
     <tr>
       <td>{{ c.component.name }}</td>
@@ -30,9 +31,21 @@
       <td class="num">{{ c.area_run2|num:2 }}</td>
       <td class="num">{{ c.area_run3|num:2 }}</td>
       <td class="num">{{ c.mean_area|num:2 }}</td>
+      <td class="num">{{ c.rsd_percent|num:3 }}</td>
       <td class="num mono">{{ c.response_factor|num:8 }}</td>
+      <td class="num mono">{{ c.relative_response_factor|num:5 }}</td>
     </tr>
     {% endfor %}
+  </table>
+  <p class="muted" style="margin-bottom: 4px;">Response factor = standard % ÷ average area. RRF is relative to the last component (as in the GC workbook); both give the same results.</p>
+
+  <h3 style="margin-top: 14px;">Each run, calculated with this calibration (%)</h3>
+  <table class="data">
+    <tr><th></th>{% for c in components %}<th>{{ c.component.name }}</th>{% endfor %}</tr>
+    {% for n, run in replicates %}
+    <tr><td>Run {{ n }}</td>{% for value in run %}<td class="num">{{ value|num:4 }}</td>{% endfor %}</tr>
+    {% endfor %}
+    <tr><td>%RSD of % of total area</td>{% for value in area_fraction_rsd %}<td class="num">{{ value|num:3 }}</td>{% endfor %}</tr>
   </table>
 </div>
 
@@ -43,21 +56,29 @@
   </div>
   {% for v in verifications %}
   <h3>{{ v.performed_on|date:"m/d/Y" }} by {{ v.performed_by|person }} {% if v.passed %}<span class="pill pass">Pass</span>{% else %}<span class="pill fail">Fail</span>{% endif %}
-    <span class="muted" style="font-weight: 400; font-size: 13px;">{% if v.uses_percent_error %}allowed error {{ v.max_error_percent|floatformat:"-4" }}%{% else %}older verification: within ±{{ legacy_tolerance }} points, not normalized{% endif %}</span></h3>
-  <table class="data" style="margin-bottom: 12px;">
-    <tr><th>Component</th><th>Theoretical %</th><th>Peak area</th><th>Calculated %</th><th>Difference</th>{% if v.uses_percent_error %}<th>% error</th>{% endif %}<th></th></tr>
+    <span class="muted" style="font-weight: 400; font-size: 13px;">{{ v.limit_display }}{% if v.expires_on %} · good until {{ v.expires_on|date:"m/d/Y" }}{% endif %}{% if v.standard %} · standard <a href="{{ v.standard.get_absolute_url }}">{{ v.standard }}</a>{% elif v.standard_cylinder %} · standard {{ v.standard_cylinder }}{% endif %}</span></h3>
+  <table class="data" style="margin-bottom: 6px;">
+    <tr><th>Component</th><th>Theoretical %</th><th>Peak area</th><th>RT (min)</th><th>Calculated %</th><th>Difference (points)</th>{% if v.rule == "percent" %}<th>% error</th>{% endif %}<th></th></tr>
     {% for vc in v.component_rows %}
     <tr>
       <td>{{ vc.calibration_component.component.name }}</td>
       <td class="num">{{ vc.theoretical_percent|num:4 }}</td>
       <td class="num">{{ vc.peak_area|num:2 }}</td>
+      <td class="num">{{ vc.retention_time|num:3 }}</td>
       <td class="num">{{ vc.calculated_percent|num:4 }}</td>
       <td class="num">{{ vc.difference|signed:4 }}</td>
-      {% if v.uses_percent_error %}<td class="num">{{ vc.percent_error|num:3 }}%</td>{% endif %}
+      {% if v.rule == "percent" %}<td class="num">{{ vc.percent_error|num:3 }}%</td>{% endif %}
       <td>{% if vc.passed %}<span class="pill pass">Pass</span>{% else %}<span class="pill fail">Fail</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </table>
+  {% if v.purity is not None or v.air_area is not None or v.co2_area is not None %}
+  <p class="muted" style="margin: 0 0 12px;">
+    {% if v.purity is not None %}Purity {{ v.purity|floatformat:"-4" }}%{% endif %}
+    {% if v.air_area is not None %} · Air {{ v.air_area|floatformat:"-2" }} µV{% if v.air_rt is not None %} at {{ v.air_rt|floatformat:"-3" }} min{% endif %}{% endif %}
+    {% if v.co2_area is not None %} · CO₂ {{ v.co2_area|floatformat:"-2" }} µV{% if v.co2_rt is not None %} at {{ v.co2_rt|floatformat:"-3" }} min{% endif %}{% endif %}
+  </p>
+  {% endif %}
   {% empty %}
   <p class="muted">No verifications yet.</p>
   {% endfor %}

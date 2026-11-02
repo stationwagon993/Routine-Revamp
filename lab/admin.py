@@ -9,10 +9,15 @@ from .models import (
     CalibrationComponent,
     ChoiceOption,
     Formula,
+    NCCalibration,
+    NCVerification,
     Profile,
+    RefrigerantDensity,
     Report,
     Sample,
     SampleTest,
+    StandardComponent,
+    StandardCylinder,
     TestMethod,
     TestResult,
     Verification,
@@ -54,6 +59,7 @@ class FormulaAdmin(admin.ModelAdmin):
         "inputs",
         "result_unit",
         "decimals",
+        "report_limit",
         "created_by",
         "created_at",
     ]
@@ -69,8 +75,40 @@ class BlendComponentInline(admin.TabularInline):
 
 @admin.register(Blend)
 class BlendAdmin(admin.ModelAdmin):
-    list_display = ["name", "description", "max_error_percent", "active"]
+    list_display = ["name", "verification_rule", "verification_limit", "verification_valid_days", "active"]
+    list_editable = ["verification_rule", "verification_limit", "verification_valid_days"]
     inlines = [BlendComponentInline]
+
+
+class StandardComponentInline(admin.TabularInline):
+    model = StandardComponent
+    extra = 0
+
+
+@admin.register(StandardCylinder)
+class StandardCylinderAdmin(admin.ModelAdmin):
+    list_display = ["code", "blend", "prepared_on", "status"]
+    list_filter = ["blend", "status"]
+    search_fields = ["code"]
+    inlines = [StandardComponentInline]
+
+
+@admin.register(RefrigerantDensity)
+class RefrigerantDensityAdmin(admin.ModelAdmin):
+    list_display = ["refrigerant", "density_g_cc"]
+    list_editable = ["density_g_cc"]
+    search_fields = ["refrigerant"]
+
+
+class NCVerificationInline(admin.TabularInline):
+    model = NCVerification
+    extra = 0
+
+
+@admin.register(NCCalibration)
+class NCCalibrationAdmin(admin.ModelAdmin):
+    list_display = ["performed_on", "performed_by", "n2_percent", "expires_on"]
+    inlines = [NCVerificationInline]
 
 
 class CalibrationComponentInline(admin.TabularInline):

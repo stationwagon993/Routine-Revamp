@@ -24,6 +24,12 @@ urlpatterns = [
     path("calibrations/new/", views.calibration_create, name="calibration_create"),
     path("calibrations/<int:pk>/", views.calibration_detail, name="calibration_detail"),
     path("calibrations/<int:pk>/verify/", views.verification_create, name="verification_create"),
+    path("calibrations/standards/", views.standard_list, name="standard_list"),
+    path("calibrations/standards/new/", views.standard_create, name="standard_create"),
+    path("calibrations/standards/<int:pk>/", views.standard_edit, name="standard_edit"),
+    path("calibrations/nc/new/", views.nc_calibration_create, name="nc_calibration_create"),
+    path("calibrations/nc/<int:pk>/", views.nc_calibration_detail, name="nc_calibration_detail"),
+    path("calibrations/nc/<int:pk>/verify/", views.nc_verification_create, name="nc_verification_create"),
     path("formulas/", views.formula_list, name="formula_list"),
     path("formulas/<int:method_pk>/new/", views.formula_new_version, name="formula_new_version"),
 ]

@@ -127,9 +127,15 @@ REPORTS_DIR = Path(_cfg("reports_dir", str(BASE_DIR / "reports")))
 # Calibrations are valid for this many months from the calibration date.
 CALIBRATION_VALID_MONTHS = int(_cfg("calibration_valid_months", "6"))
 
-# A verification passes when every component's calculated % is within this many
-# percentage points of the theoretical %.
+# Only for verifications saved before each blend had its own rule: they passed when
+# every component was within this many percentage points.
 VERIFICATION_TOLERANCE = float(_cfg("verification_tolerance", "0.03"))
+
+# Gravimetric standard cylinders can be used for this many days after they're prepared.
+STANDARD_VALID_DAYS = int(_cfg("standard_valid_days", "7"))
+
+# A passing non-condensables verification is good for this many days.
+NC_VERIFICATION_VALID_DAYS = int(_cfg("nc_verification_valid_days", "7"))
 
 # Text appended to every report email.
 EMAIL_SIGNATURE = _cfg("email_signature", "").replace("\\n", "\n")

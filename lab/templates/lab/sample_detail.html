@@ -32,11 +32,13 @@
           {% for r in test.results.all %}
           <tr>
             <td>{{ r.label|default:method.name }}</td>
-            <td class="num"><strong>{{ r.display_value }}</strong> {{ r.unit }}</td>
+            <td class="num"><strong>{{ r.display_value }}</strong> {{ r.unit }}{% if r.text_value and r.value is not None %} <span class="muted">(calculated {{ r.value|num:4 }})</span>{% endif %}</td>
             <td class="muted">{{ r.entered_by|person }}, {{ r.entered_at|date:"m/d/Y H:i" }}</td>
             <td class="muted">
               {% if r.formula %}Formula v{{ r.formula.version }}{% if r.formula.is_placeholder %} <span class="pill unverified">placeholder</span>{% endif %}{% endif %}
               {% if test.calibration and forloop.first %}<a href="{{ test.calibration.get_absolute_url }}">Calibration {{ test.calibration.performed_on|date:"m/d/Y" }}</a>{% endif %}
+              {% if test.nc_calibration and forloop.first %}<a href="{{ test.nc_calibration.get_absolute_url }}">NC calibration {{ test.nc_calibration.performed_on|date:"m/d/Y" }}</a>{% endif %}
+              {% if r.inputs.refrigerant_density %}· density {{ r.inputs.refrigerant_density }} g/cc{% endif %}
             </td>
           </tr>
           {% endfor %}
@@ -45,7 +47,10 @@
 
         {% if method.calc_type == "formula" %}
           {% if formula %}
-          <p class="muted">{{ formula.get_pressure_display }} formula ({{ sample.refrigerant_type|default:"no refrigerant type" }}).</p>
+          <p class="muted">{{ formula.get_pressure_display }} formula ({{ sample.refrigerant_type|default:"no refrigerant type" }}).
+            {% if "refrigerant_density" in formula.sample_variables %}{% if refrigerant_density %}Refrigerant density {{ refrigerant_density }} g/cc.{% endif %}{% endif %}
+            {% if formula.report_limit %}Reported as “&lt;limit” at or below {{ formula.report_limit }}.{% endif %}</p>
+          {% if "refrigerant_density" in formula.sample_variables and not refrigerant_density %}<div class="banner-warn">No liquid density is set up for {{ sample.refrigerant_type|default:"this sample's refrigerant" }}. Add it under <a href="{% url 'admin:lab_refrigerantdensity_changelist' %}">Admin → Refrigerant densities</a>.</div>{% endif %}
           {% if formula.is_placeholder %}<div class="banner-warn">This is a <strong>placeholder formula</strong> that has not been confirmed by the lab. <a href="{% url 'lab:formula_new_version' method.pk %}?pressure={{ formula.pressure }}">Enter the real formula</a>.</div>{% endif %}
           <form method="post" action="{% url 'lab:test_results' test.pk %}" data-calc-url="{% url 'lab:test_calculate' test.pk %}">
             {% csrf_token %}
@@ -70,9 +75,9 @@
           {% if not sample.blend %}
           <div class="banner-warn">{{ sample.refrigerant_type|default:"This sample's refrigerant" }} isn't set up as a blend yet. Add it with its components under <a href="{% url 'admin:lab_blend_add' %}">Admin → Blends</a>; this sample picks it up automatically.</div>
           {% elif not calibration %}
-          <div class="banner-warn">There is no current, verified calibration for {{ sample.blend }}. Results can't be calculated until one exists. <a href="{% url 'lab:calibration_create' %}?blend={{ sample.blend_id }}">Calibrate {{ sample.blend }}</a></div>
+          <div class="banner-warn">There is no current, verified calibration for {{ sample.blend }} (or its verification has expired). Results can't be calculated until there is. <a href="{% url 'lab:calibration_list' %}">Calibrations</a></div>
           {% else %}
-          <p class="muted">Using the {{ sample.blend }} calibration from <a href="{{ calibration.get_absolute_url }}">{{ calibration.performed_on|date:"m/d/Y" }}</a> (expires {{ calibration.expires_on|date:"m/d/Y" }}).</p>
+          <p class="muted">Using the {{ sample.blend }} calibration from <a href="{{ calibration.get_absolute_url }}">{{ calibration.performed_on|date:"m/d/Y" }}</a> (expires {{ calibration.expires_on|date:"m/d/Y" }}; verified until {{ calibration.latest_verification.expires_on|date:"m/d/Y" }}).</p>
           <form method="post" action="{% url 'lab:test_results' test.pk %}" data-calc-url="{% url 'lab:test_calculate' test.pk %}">
             {% csrf_token %}
             <table class="data">
@@ -87,6 +92,26 @@
             </table>
             <div class="calc-output"></div>
             <p><button type="submit">Save results</button></p>
+          </form>
+          {% endif %}
+
+        {% elif method.calc_type == "nc" %}
+          {% if not nc_calibration %}
+          <div class="banner-warn">There is no current, verified non-condensables calibration (or its verification has expired). <a href="{% url 'lab:calibration_list' %}">Calibrations</a></div>
+          {% else %}
+          <p class="muted">Using the non-condensables calibration from <a href="{{ nc_calibration.get_absolute_url }}">{{ nc_calibration.performed_on|date:"m/d/Y" }}</a>: % N₂ = average area ÷ {{ nc_calibration.area_per_percent|floatformat:2 }} µV.</p>
+          <form method="post" action="{% url 'lab:test_results' test.pk %}" data-calc-url="{% url 'lab:test_calculate' test.pk %}">
+            {% csrf_token %}
+            <div class="inputs">
+              {% for n in nc_replicates %}
+              <div>
+                <label for="nc-{{ test.pk }}-{{ n }}">Replicate {{ n }} area (µV)</label>
+                <input type="number" step="any" id="nc-{{ test.pk }}-{{ n }}" name="nc_area_{{ n }}"{% if forloop.first %} data-required{% endif %}>
+              </div>
+              {% endfor %}
+              <button type="submit">Save result</button>
+            </div>
+            <div class="calc-output"></div>
           </form>
           {% endif %}
 

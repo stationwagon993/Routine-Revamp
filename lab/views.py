@@ -10,6 +10,7 @@ from django.db import transaction
 from django.db.models import Max, Prefetch, Q
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_POST
@@ -18,9 +19,12 @@ from . import outlook, reports, services
 from .forms import (
     CalibrationForm,
     FormulaForm,
+    NCCalibrationForm,
+    NCVerificationForm,
     ReportForm,
     SampleForm,
     SampleIntakeForm,
+    StandardCylinderForm,
     VerificationForm,
 )
 from .models import (
@@ -29,11 +33,16 @@ from .models import (
     CalibrationComponent,
     ChoiceOption,
     Formula,
+    NCCalibration,
+    NCVerification,
+    RefrigerantDensity,
     Report,
     Sample,
     SampleTest,
+    StandardCylinder,
     TestMethod,
     VerificationComponent,
+    rsd_percent,
 )
 
 GROUP_ORDER = [TestMethod.GROUP_GENERAL, TestMethod.GROUP_REFRIGERANT, TestMethod.GROUP_OIL]
@@ -146,7 +155,7 @@ def sample_log(request):
             "date_to": date_to,
             "filter_summary": _filter_summary(needed, date_from, date_to),
             "params": params.urlencode(),
-            "expiring": _expiring_calibrations(),
+            "calibration_warnings": _calibration_warnings(),
         },
     )
 
@@ -208,11 +217,14 @@ def sample_detail(request, pk):
         if sample.blend:
             sample.save(update_fields=["blend"])
     tests = list(
-        sample.tests.select_related("test_method", "completed_by", "calibration").prefetch_related(
+        sample.tests.select_related("test_method", "completed_by", "calibration", "nc_calibration").prefetch_related(
             "results__formula"
         )
     )
     calibration = sample.blend.active_calibration() if sample.blend else None
+    nc_calibration = None
+    if any(t.test_method.calc_type == TestMethod.CALC_NC for t in tests):
+        nc_calibration = NCCalibration.active()
     entries = []
     for test in tests:
         formula = None
@@ -240,6 +252,9 @@ def sample_detail(request, pk):
             "calibration_components": calibration.components.select_related("component")
             if calibration
             else [],
+            "nc_calibration": nc_calibration,
+            "nc_replicates": range(1, 5),
+            "refrigerant_density": RefrigerantDensity.lookup(sample.refrigerant_type),
             "status_choices": SampleTest.STATUS_CHOICES,
             "addable": addable,
             "related": related,
@@ -415,24 +430,38 @@ def report_list(request):
 # --- Calibrations -----------------------------------------------------------
 
 
-def _expiring_calibrations():
-    """Current calibrations that expire soon, one per blend."""
+def _calibration_warnings():
+    """Sample log banners: calibrations about to expire and verifications that need redoing."""
     today = timezone.localdate()
-    soon = []
+    warnings = []
     for blend in Blend.objects.filter(active=True):
-        calibration = blend.active_calibration()
-        if calibration and calibration.expires_on <= today + timedelta(days=EXPIRY_WARNING_DAYS):
-            soon.append(calibration)
-    return soon
+        latest = blend.calibrations.filter(expires_on__gte=today).first()
+        if latest is None:
+            continue
+        if latest.expires_on <= today + timedelta(days=EXPIRY_WARNING_DAYS):
+            warnings.append(
+                {
+                    "text": f"The {blend} calibration expires on {latest.expires_on:%m/%d/%Y}.",
+                    "url": reverse("lab:calibration_create") + f"?blend={blend.pk}",
+                    "link": "Calibrate now",
+                }
+            )
+        if latest.status == Calibration.STATUS_REVERIFY:
+            warnings.append(
+                {
+                    "text": f"The {blend} verification has expired; blend results can't be entered until it's verified again.",
+                    "url": reverse("lab:verification_create", args=[latest.pk]),
+                    "link": "Verify now",
+                }
+            )
+    return warnings
 
 
 @login_required
 def calibration_list(request):
     today = timezone.localdate()
     archive = request.GET.get("view") == "archive"
-    calibrations = Calibration.objects.select_related("blend", "performed_by").prefetch_related(
-        "verifications__components__calibration_component"
-    )
+    calibrations = Calibration.objects.select_related("blend", "performed_by", "standard")
     if archive:
         calibrations = calibrations.filter(expires_on__lt=today)
     else:
@@ -441,8 +470,13 @@ def calibration_list(request):
     if blend_id:
         calibrations = calibrations.filter(blend_id=blend_id)
 
-    blends = Blend.objects.filter(active=True)
-    blend_status = [(blend, blend.active_calibration()) for blend in blends]
+    blend_status = []
+    for blend in Blend.objects.filter(active=True):
+        latest = blend.calibrations.filter(expires_on__gte=today).first()
+        verification = latest.latest_verification if latest else None
+        blend_status.append((blend, latest, verification))
+    nc = NCCalibration.objects.filter(expires_on__gte=today).first()
+    standards = StandardCylinder.objects.filter(status=StandardCylinder.STATUS_ON_HAND).select_related("blend")
     return render(
         request,
         "lab/calibration_list.html",
@@ -452,23 +486,31 @@ def calibration_list(request):
             "blends": Blend.objects.all(),
             "blend_id": blend_id,
             "blend_status": blend_status,
+            "nc": nc,
+            "nc_verification": nc.latest_verification if nc else None,
+            "standards": standards,
         },
     )
 
 
+def _blend_from_request(request):
+    if request.GET.get("blend"):
+        return get_object_or_404(Blend, pk=request.GET["blend"], active=True)
+    return None
+
+
 @login_required
 def calibration_create(request):
-    blend = None
-    if request.GET.get("blend"):
-        blend = get_object_or_404(Blend, pk=request.GET["blend"], active=True)
+    blend = _blend_from_request(request)
     if blend is None:
         return render(
-            request, "lab/calibration_choose_blend.html", {"blends": Blend.objects.filter(active=True)}
+            request,
+            "lab/calibration_choose_blend.html",
+            {"blends": Blend.objects.filter(active=True), "action": "Calibrate", "title": "New calibration"},
         )
     if not blend.components.exists():
         messages.error(request, f"{blend} has no components yet. Add them in Admin → Blends.")
         return redirect("lab:calibration_list")
-
     form = CalibrationForm(request.POST or None, blend=blend)
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
@@ -488,26 +530,33 @@ def calibration_create(request):
 @login_required
 def calibration_detail(request, pk):
     calibration = get_object_or_404(
-        Calibration.objects.select_related("blend", "performed_by"), pk=pk
+        Calibration.objects.select_related("blend", "performed_by", "standard"), pk=pk
     )
+    components = calibration.component_rows()
+    replicates = calibration.replicate_compositions()
     return render(
         request,
         "lab/calibration_detail.html",
         {
             "calibration": calibration,
-            "components": calibration.components.select_related("component"),
-            "verifications": calibration.verifications.select_related("performed_by").prefetch_related(
+            "components": components,
+            "replicates": [(i + 1, run) for i, run in enumerate(replicates)],
+            # The workbook's "RSD of % of Total Area": each run's area ÷ that run's total area.
+            "area_fraction_rsd": [
+                rsd_percent([c.areas[run] / sum(o.areas[run] for o in components) for run in range(3)])
+                for c in components
+            ],
+            "verifications": calibration.verifications.select_related("performed_by", "standard").prefetch_related(
                 "components__calibration_component__component"
             ),
             "samples": Sample.objects.filter(tests__calibration=calibration).distinct(),
-            "legacy_tolerance": settings.VERIFICATION_TOLERANCE,
         },
     )
 
 
 @login_required
 def verification_create(request, pk):
-    calibration = get_object_or_404(Calibration, pk=pk)
+    calibration = get_object_or_404(Calibration.objects.select_related("blend"), pk=pk)
     if calibration.is_expired:
         messages.error(request, "This calibration has expired and is read-only.")
         return redirect(calibration)
@@ -515,24 +564,137 @@ def verification_create(request, pk):
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             blend = calibration.blend
-            blend.max_error_percent = form.cleaned_data["max_error_percent"]
-            blend.save(update_fields=["max_error_percent"])
+            blend.verification_rule = form.cleaned_data["verification_rule"]
+            blend.verification_limit = form.cleaned_data["verification_limit"]
+            blend.save(update_fields=["verification_rule", "verification_limit"])
             verification = form.save(commit=False)
             verification.calibration = calibration
             verification.performed_by = request.user
-            verification.max_error_percent = blend.max_error_percent
+            verification.standard_cylinder = verification.standard.code
+            verification.rule = blend.verification_rule
+            verification.limit = blend.verification_limit
             verification.save()
             for cc, values in form.component_values():
                 VerificationComponent.objects.create(
                     verification=verification, calibration_component=cc, **values
                 )
         if verification.passed:
-            messages.success(request, "Verification passed. The calibration is now active.")
+            messages.success(
+                request,
+                f"Verification passed. The calibration can be used until {verification.expires_on:%m/%d/%Y}.",
+            )
         else:
             messages.error(request, "Verification failed. The calibration cannot be used.")
         return redirect(calibration)
     return render(
         request, "lab/verification_form.html", {"form": form, "calibration": calibration}
+    )
+
+
+# --- Standard cylinders --------------------------------------------------------
+
+
+@login_required
+def standard_list(request):
+    standards = StandardCylinder.objects.select_related("blend", "prepared_by").prefetch_related(
+        "components__component"
+    )
+    blend_id = request.GET.get("blend")
+    if blend_id:
+        standards = standards.filter(blend_id=blend_id)
+    show = request.GET.get("show", "on_hand")
+    if show == "on_hand":
+        standards = standards.filter(status=StandardCylinder.STATUS_ON_HAND)
+    return render(
+        request,
+        "lab/standard_list.html",
+        {"standards": standards, "blends": Blend.objects.all(), "blend_id": blend_id, "show": show},
+    )
+
+
+@login_required
+def standard_create(request):
+    blend = _blend_from_request(request)
+    if blend is None:
+        return render(
+            request,
+            "lab/calibration_choose_blend.html",
+            {"blends": Blend.objects.filter(active=True), "action": "Add standard", "title": "New standard cylinder"},
+        )
+    form = StandardCylinderForm(request.POST or None, blend=blend)
+    if request.method == "POST" and form.is_valid():
+        standard = form.save(user=request.user)
+        messages.success(request, f"Standard {standard} added.")
+        return redirect("lab:standard_list")
+    return render(request, "lab/standard_form.html", {"form": form, "blend": blend})
+
+
+@login_required
+def standard_edit(request, pk):
+    standard = get_object_or_404(StandardCylinder.objects.select_related("blend"), pk=pk)
+    form = StandardCylinderForm(request.POST or None, instance=standard, blend=standard.blend)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, f"Standard {standard} saved.")
+        return redirect("lab:standard_list")
+    return render(request, "lab/standard_form.html", {"form": form, "blend": standard.blend, "standard": standard})
+
+
+# --- Non-condensables -----------------------------------------------------------
+
+
+@login_required
+def nc_calibration_create(request):
+    form = NCCalibrationForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        calibration = form.save(commit=False)
+        calibration.performed_by = request.user
+        calibration.save()
+        messages.success(request, "Non-condensables calibration saved. Run the verification next.")
+        return redirect(calibration)
+    return render(request, "lab/nc_form.html", {"form": form, "title": "Non-condensables calibration"})
+
+
+@login_required
+def nc_calibration_detail(request, pk):
+    calibration = get_object_or_404(NCCalibration, pk=pk)
+    return render(
+        request,
+        "lab/nc_detail.html",
+        {
+            "calibration": calibration,
+            "verifications": calibration.verifications.select_related("performed_by"),
+            "samples": Sample.objects.filter(tests__nc_calibration=calibration).distinct(),
+        },
+    )
+
+
+@login_required
+def nc_verification_create(request, pk):
+    calibration = get_object_or_404(NCCalibration, pk=pk)
+    if calibration.is_expired:
+        messages.error(request, "This calibration has expired and is read-only.")
+        return redirect(calibration)
+    previous = NCVerification.objects.order_by("-performed_on", "-id").first()
+    initial = {"max_error_percent": previous.max_error_percent} if previous else {}
+    form = NCVerificationForm(request.POST or None, initial=initial)
+    if request.method == "POST" and form.is_valid():
+        verification = form.save(commit=False)
+        verification.calibration = calibration
+        verification.performed_by = request.user
+        verification.save()
+        if verification.passed:
+            messages.success(
+                request,
+                f"Verification passed. The calibration can be used until {verification.expires_on:%m/%d/%Y}.",
+            )
+        else:
+            messages.error(request, "Verification failed. The calibration cannot be used.")
+        return redirect(calibration)
+    return render(
+        request,
+        "lab/nc_form.html",
+        {"form": form, "title": f"Verify {calibration}", "calibration": calibration},
     )
 
 
@@ -563,6 +725,7 @@ def formula_new_version(request, method_pk):
         draft.inputs = current.inputs
         draft.result_unit = current.result_unit
         draft.decimals = current.decimals
+        draft.report_limit = current.report_limit
     # Offer to save for both pressures; ticked when they share a formula today.
     if current is None:
         both = other_current is None
