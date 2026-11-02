@@ -6,6 +6,13 @@ document.querySelectorAll("tr[data-href]").forEach(function (row) {
   });
 });
 
+// Sample log: close the "Testing needed" menu when clicking elsewhere.
+document.addEventListener("click", function (event) {
+  document.querySelectorAll("details.filter-menu[open]").forEach(function (menu) {
+    if (!menu.contains(event.target)) menu.open = false;
+  });
+});
+
 // Result entry: recalculate on the server as the user types (nothing is saved).
 document.querySelectorAll("form[data-calc-url]").forEach(function (form) {
   var output = form.querySelector(".calc-output");
@@ -56,6 +63,10 @@ document.querySelectorAll("form[data-calc-url]").forEach(function (form) {
   var form = document.getElementById("intake-form");
   if (!form) return;
   var OTHER = "__other__";
+  var singleComponent = (form.dataset.singleComponent || "").split(" ").filter(Boolean);
+
+  // Same comparison as the server: R-1233zd(E) = r1233zde.
+  function nameKey(name) { return name.toLowerCase().replace(/[^a-z0-9]/g, ""); }
 
   function value(name) {
     var els = form.querySelectorAll('[name="' + name + '"]');
@@ -81,6 +92,10 @@ document.querySelectorAll("form[data-calc-url]").forEach(function (form) {
     f["refrigerant-sample"] = type === "refrigerant";
     f["type-other"] = type === "other";
     f.kind = type === "refrigerant" ? value("phase") : type;
+    var refrigerantField = f.plant7 ? "plant7_refrigerant" : "refrigerant";
+    var refrigerant = value(refrigerantField);
+    if (refrigerant === OTHER) refrigerant = value(refrigerantField + "_other");
+    f.singleComponent = singleComponent.indexOf(nameKey(refrigerant)) !== -1;
     var blend = form.querySelector("input[data-blend]");
     f["blend-requested"] = !blend || blend.checked;
     return f;
@@ -100,6 +115,8 @@ document.querySelectorAll("form[data-calc-url]").forEach(function (form) {
     form.querySelectorAll("label[data-applies]").forEach(function (label) {
       var applies = label.dataset.applies.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
       var ok = !!f.kind && (f.kind === "other" || applies.length === 0 || applies.indexOf(f.kind) !== -1);
+      // No Blend Analysis for single-component refrigerants.
+      if (f.singleComponent && label.querySelector("input[data-blend]")) ok = false;
       label.hidden = !ok;
       if (!ok) label.querySelector("input").checked = false;
       any = any || ok;

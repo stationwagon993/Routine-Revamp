@@ -298,9 +298,9 @@ class ViewTests(LabTestCase):
         self.intake(origin="New Refrigerant Tank", lot_number="8", phase="expanded", tests=[blend.pk])
         self.intake(origin="New Lubricant Drum", lot_number="22", tests=[tan.pk])
         tank, drum = Sample.objects.order_by("sequence")
-        self.assertEqual(tank.identification, "New Refrigerant Tank, Lot 8, R-410A, Expanded Liquid")
+        self.assertEqual(tank.identification, "New Refrigerant Tank, Lot 8, Expanded Liquid")
         self.assertEqual(tank.sample_type, Sample.TYPE_REFRIGERANT)
-        self.assertEqual(drum.identification, "New Lubricant Drum, Lot 22, Solest 120, Oil")
+        self.assertEqual(drum.identification, "New Lubricant Drum, Lot 22, Oil")
         self.assertEqual(drum.sample_type, Sample.TYPE_OIL)
         self.assertEqual(drum.refrigerant_type, "")
 
@@ -338,6 +338,35 @@ class ViewTests(LabTestCase):
         sample.refresh_from_db()
         self.assertEqual(sample.identification, "Plant 4, U2, Oil")
 
+    def test_identification_matches_excel_log(self):
+        tests = [TestMethod.objects.get(name="Moisture").pk]
+        self.intake(origin="Lab 11", lab11_area="Unitary", unit_id="E137", sample_type="refrigerant", phase="liquid", tests=tests)
+        self.intake(origin="Lab 11", lab11_area="Reclaimed Refrigerant Tank", unit_id="014323", sample_type="refrigerant", phase="liquid", tests=tests)
+        self.intake(origin="Plant 7", plant7_location="Bay B South", plant7_refrigerant="R-514A", unit_id="U9", sample_type="refrigerant", phase="liquid", tests=tests)
+        self.assertEqual(
+            list(Sample.objects.order_by("sequence").values_list("identification", flat=True)),
+            ["Unitary, E137, Refrigerant, Liquid", "Reclaimed Tank, Tank 014323, Liquid", "Plant 7, Bay B South"],
+        )
+
+    def test_elto_required(self):
+        tan = TestMethod.objects.get(name="TAN")
+        response = self.intake(origin="New Lubricant Drum", lot_number="22", lto="", tests=[tan.pk])
+        self.assertIn("lto", response.context["form"].errors)
+        self.assertFalse(Sample.objects.exists())
+
+    def test_no_blend_analysis_for_single_component_refrigerants(self):
+        blend = TestMethod.objects.get(name="Blend Analysis")
+        for answers in [
+            {"refrigerant": "R-134a"},
+            {"refrigerant": "__other__", "refrigerant_other": "R1234ZE(E)"},
+        ]:
+            with self.subTest(**answers):
+                response = self.intake(origin="Plant 4", unit_id="U1", sample_type="refrigerant", phase="liquid", tests=[blend.pk], **answers)
+                self.assertIn("single-component", str(response.context["form"].errors["tests"]))
+        self.assertFalse(Sample.objects.exists())
+        page = self.client.get(reverse("lab:sample_create"))
+        self.assertContains(page, 'data-single-component="r1233zde r1234zee r134a r22"')
+
     def test_tests_must_fit_sample_type(self):
         non_cond = TestMethod.objects.get(name="Non-Condensables")
         response = self.intake(origin="Plant 4", unit_id="U1", sample_type="refrigerant", phase="liquid", tests=[non_cond.pk])
@@ -346,7 +375,7 @@ class ViewTests(LabTestCase):
 
     def test_blend_analysis_needs_a_known_blend(self):
         blend = TestMethod.objects.get(name="Blend Analysis")
-        response = self.intake(origin="Plant 4", unit_id="U1", refrigerant="R-22", sample_type="refrigerant", phase="liquid", tests=[blend.pk])
+        response = self.intake(origin="Plant 4", unit_id="U1", refrigerant="__other__", refrigerant_other="R-999X", sample_type="refrigerant", phase="liquid", tests=[blend.pk])
         self.assertIn("blend", response.context["form"].errors)
         self.assertFalse(Sample.objects.exists())
 
@@ -358,6 +387,51 @@ class ViewTests(LabTestCase):
         form = page.context["form"]
         self.assertEqual(form["plant7_location"].value(), "Bay B North")
         self.assertEqual(form["plant7_refrigerant"].value(), "R-514A")
+
+    def test_sample_log_columns_and_filters(self):
+        moisture = TestMethod.objects.get(name="Moisture")
+        tan = TestMethod.objects.get(name="TAN")
+        a = self.make_sample(received_on=datetime.date(2026, 10, 26), refrigerant_type="R-454B",
+                             lubricant_type="CPI 2931 AW", sampled_on=datetime.date(2026, 10, 25),
+                             submitter="Logan Kiasau", requested_by_name="Tejesh Dube")
+        b = self.make_sample(received_on=datetime.date(2026, 10, 27))
+        c = self.make_sample(received_on=datetime.date(2026, 10, 28))
+        self.add_test(a, "Moisture")
+        self.add_test(b, "TAN")
+        done = self.add_test(c, "Moisture")
+        done.status = SampleTest.STATUS_COMPLETED
+        done.save()
+
+        def shown(**params):
+            response = self.client.get(reverse("lab:sample_log"), params)
+            return {sample.pk for sample, _ in response.context["rows"]}
+
+        self.assertEqual(shown(tests=[moisture.pk]), {a.pk})
+        self.assertEqual(shown(tests=[moisture.pk, tan.pk]), {a.pk, b.pk})
+        self.assertEqual(shown(**{"from": "2026-10-27"}), {b.pk, c.pk})
+        self.assertEqual(shown(**{"from": "2026-10-26", "to": "2026-10-27"}), {a.pk, b.pk})
+        self.assertEqual(shown(julian="26301"), {c.pk})
+        self.assertEqual(shown(**{"from": "2026-02-30", "julian": "abc"}), {a.pk, b.pk, c.pk})
+
+        page = self.client.get(reverse("lab:sample_log")).content.decode()
+        headers = ["LTO", "Refrigerant Type", "Lubricant", "Sample Date", "Submitter", "Engineer", "Comments"]
+        positions = [page.index(f"<th>{h}</th>") for h in headers]
+        self.assertEqual(positions, sorted(positions))
+        for text in ["R-454B", "CPI 2931 AW", "10/25/2026", "Logan Kiasau", "Tejesh Dube"]:
+            self.assertIn(text, page)
+
+    def test_report_addressed_to_engineer(self):
+        sample = self.make_sample(requested_by_name="Lee, Jordan")
+        response = self.client.post(reverse("lab:report_create", args=[sample.pk]))
+        report = Report.objects.get()
+        self.assertRedirects(response, report.get_absolute_url())
+        self.assertEqual(report.recipient_email, "Lee, Jordan")
+        self.assertEqual(outlook.compose(report)["to"], ["Lee, Jordan"])
+
+    def test_intake_lists_general_tests_last(self):
+        page = self.client.get(reverse("lab:sample_create")).content.decode()
+        self.assertLess(page.index("<h3>Refrigerant</h3>"), page.index("<h3>Oil</h3>"))
+        self.assertLess(page.index("<h3>Oil</h3>"), page.index("<h3>General</h3>"))
 
     def test_pages_render(self):
         cal, _, _ = self.make_calibration()

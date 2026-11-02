@@ -123,7 +123,7 @@ class ReportAdmin(admin.ModelAdmin):
 class ChoiceOptionAdmin(admin.ModelAdmin):
     """Dropdown choices on the sample submission form."""
 
-    list_display = ["label", "list_name", "short_label", "order", "active"]
-    list_editable = ["short_label", "order", "active"]
+    list_display = ["label", "list_name", "short_label", "order", "single_component", "active"]
+    list_editable = ["short_label", "order", "single_component", "active"]
     list_filter = ["list_name", "active"]
     search_fields = ["label"]

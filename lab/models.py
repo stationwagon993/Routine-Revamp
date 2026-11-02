@@ -1,5 +1,6 @@
 import calendar
 import datetime
+import re
 
 from django.conf import settings
 from django.db import models, transaction
@@ -356,6 +357,10 @@ class ChoiceOption(models.Model):
     )
     order = models.PositiveIntegerField(default=0)
     active = models.BooleanField(default=True)
+    single_component = models.BooleanField(
+        default=False,
+        help_text="Refrigerant types only: a single-component refrigerant can't have Blend Analysis.",
+    )
 
     class Meta:
         ordering = ["list_name", "order", "label"]
@@ -371,6 +376,18 @@ class ChoiceOption(models.Model):
         return list(
             cls.objects.filter(list_name=list_name, active=True).values_list("label", flat=True)
         )
+
+    @staticmethod
+    def name_key(name):
+        """Refrigerant names compared ignoring case, spaces, dashes and brackets: R-1233zd(E) = r1233zde."""
+        return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+    @classmethod
+    def single_component_keys(cls):
+        names = cls.objects.filter(
+            list_name__in=[cls.REFRIGERANT, cls.PLANT7_REFRIGERANT], single_component=True
+        ).values_list("label", flat=True)
+        return {cls.name_key(n) for n in names}
 
     @classmethod
     def short(cls, list_name, label):
@@ -405,6 +422,7 @@ class Sample(models.Model):
     ORIGINS = [ORIGIN_PLANT4, ORIGIN_PLANT7, ORIGIN_LAB11, ORIGIN_NEW_TANK, ORIGIN_NEW_DRUM]
     # Lab 11 area that is asked for its compressor test stand.
     COMPRESSOR_GROUP = "Compressor Group"
+    RECLAIMED_TANK = "Reclaimed Refrigerant Tank"
 
     sample_number = models.CharField(max_length=20, unique=True, editable=False)
     julian = models.CharField(max_length=5, editable=False)
@@ -464,21 +482,30 @@ class Sample(models.Model):
 
     def build_identification(self):
         """Sample log text in the lab's usual style, built from the intake answers."""
+        # Refrigerant and lubricant have their own sample log columns, so they are left out here.
         type_label = self.sample_type_other or self.get_sample_type_display()
+        phase = self.get_phase_display() if self.sample_type == self.TYPE_REFRIGERANT else ""
         if self.origin == self.ORIGIN_NEW_TANK:
-            parts = [self.origin, f"Lot {self.lot_number}", self.refrigerant_type, self.get_phase_display()]
+            parts = [self.origin, f"Lot {self.lot_number}", phase]
         elif self.origin == self.ORIGIN_NEW_DRUM:
-            parts = [self.origin, f"Lot {self.lot_number}", self.lubricant_type, "Oil"]
+            parts = [self.origin, f"Lot {self.lot_number}", "Oil"]
+        elif self.origin == self.ORIGIN_PLANT7:
+            # The Excel log lists Plant 7 samples by location only, e.g. "Plant 7, Bay B South".
+            parts = [self.origin, ChoiceOption.short(ChoiceOption.PLANT7_LOCATION, self.origin_area)]
+        elif self.origin == self.ORIGIN_LAB11 and self.origin_area == self.RECLAIMED_TANK:
+            # "Reclaimed Tank, Tank 014323, Liquid"
+            tank = self.unit_id
+            if tank and not tank.lower().startswith("tank"):
+                tank = f"Tank {tank}"
+            parts = [ChoiceOption.short(ChoiceOption.LAB11_CATEGORY, self.origin_area), tank]
+            parts += [phase] if phase else [type_label]
         else:
             if self.origin == self.ORIGIN_LAB11:
                 parts = [ChoiceOption.short(ChoiceOption.LAB11_CATEGORY, self.origin_area)]
-            elif self.origin == self.ORIGIN_PLANT7:
-                parts = [self.origin, ChoiceOption.short(ChoiceOption.PLANT7_LOCATION, self.origin_area)]
             else:
                 parts = [self.origin]
-            parts += [self.gcs_stand, self.unit_id, type_label]
-            if self.sample_type == self.TYPE_REFRIGERANT:
-                parts.append(self.get_phase_display())
+            # "Compressors, GCS 12, Refrigerant, Liquid" / "Unitary, E137, Refrigerant, Liquid" / "Compressors, GCS 3, Oil"
+            parts += [self.gcs_stand, self.unit_id, type_label, phase]
         return ", ".join(p for p in parts if p and p != "—")
 
     def save(self, *args, **kwargs):

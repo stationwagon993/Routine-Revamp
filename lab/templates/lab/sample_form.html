@@ -3,7 +3,7 @@
 {% block content %}
 <h1>{% if sample %}Edit sample {{ sample.sample_number }}{% else %}Sample submission{% endif %}</h1>
 {% if not sample %}<p class="muted">The sample number is assigned automatically from the received date (Julian date + sequence).</p>{% endif %}
-<form method="post" id="intake-form" novalidate>
+<form method="post" id="intake-form" data-single-component="{{ single_component|join:' ' }}" novalidate>
   {% csrf_token %}
   {% if form.errors %}<div class="banner-warn">Please fix the questions marked in red below.</div>{% endif %}
   {{ form.non_field_errors }}
@@ -53,8 +53,6 @@
     <div class="form-grid">
       {% include "lab/_field.html" with field=form.requested_by_name %}
       {% include "lab/_field.html" with field=form.lto %}
-      {% include "lab/_field.html" with field=form.requested_by_email %}
-      {% include "lab/_field.html" with field=form.cc_emails %}
       {% include "lab/_field.html" with field=form.comments wide=True %}
     </div>
   </div>

@@ -10,6 +10,7 @@ from django.db.models import Max, Prefetch, Q
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_POST
 
 from . import outlook, reports, services
@@ -25,6 +26,7 @@ from .models import (
     Blend,
     Calibration,
     CalibrationComponent,
+    ChoiceOption,
     Formula,
     Report,
     Sample,
@@ -34,11 +36,13 @@ from .models import (
 )
 
 GROUP_ORDER = [TestMethod.GROUP_GENERAL, TestMethod.GROUP_REFRIGERANT, TestMethod.GROUP_OIL]
+# The intake form lists the sample-specific tests first.
+INTAKE_GROUP_ORDER = [TestMethod.GROUP_REFRIGERANT, TestMethod.GROUP_OIL, TestMethod.GROUP_GENERAL]
 EXPIRY_WARNING_DAYS = 14
 
 
-def _ordered_methods(queryset):
-    return sorted(queryset, key=lambda m: (GROUP_ORDER.index(m.group), m.display_order, m.name))
+def _ordered_methods(queryset, group_order=GROUP_ORDER):
+    return sorted(queryset, key=lambda m: (group_order.index(m.group), m.display_order, m.name))
 
 
 def _grouped(methods):
@@ -46,6 +50,13 @@ def _grouped(methods):
         (dict(TestMethod.GROUP_CHOICES)[group], list(items))
         for group, items in groupby(methods, key=lambda m: m.group)
     ]
+
+
+def _date_param(request, name):
+    try:
+        return parse_date(request.GET.get(name, ""))
+    except ValueError:  # Well-formed but impossible, e.g. 2026-02-30.
+        return None
 
 
 def _open_samples():
@@ -65,6 +76,23 @@ def sample_log(request):
     show = request.GET.get("show", "all")
     if show == "open":
         samples = samples.filter(pk__in=_open_samples())
+    needed = [m for m in methods if str(m.pk) in request.GET.getlist("tests")]
+    if needed:
+        # Samples that still need any of the chosen tests.
+        samples = samples.filter(
+            pk__in=SampleTest.objects.filter(
+                test_method__in=needed, status__in=SampleTest.OPEN_STATUSES
+            ).values("sample")
+        )
+    date_from = _date_param(request, "from")
+    date_to = _date_param(request, "to")
+    if date_from:
+        samples = samples.filter(received_on__gte=date_from)
+    if date_to:
+        samples = samples.filter(received_on__lte=date_to)
+    julian = "".join(c for c in request.GET.get("julian", "") if c.isdigit())
+    if julian:
+        samples = samples.filter(julian__startswith=julian)
     query = request.GET.get("q", "").strip()
     if query:
         samples = samples.filter(
@@ -81,6 +109,8 @@ def sample_log(request):
         )
 
     page = Paginator(samples, 100).get_page(request.GET.get("page"))
+    params = request.GET.copy()
+    params.pop("page", None)
     oldest = _open_samples().order_by("julian", "sequence").first()
 
     rows = []
@@ -98,6 +128,13 @@ def sample_log(request):
             "oldest": oldest,
             "show": show,
             "query": query,
+            "needed": needed,
+            "needed_ids": {m.pk for m in needed},
+            "date_from": date_from,
+            "date_to": date_to,
+            "julian": julian,
+            "filtered": bool(needed or date_from or date_to or julian),
+            "params": params.urlencode(),
             "expiring": _expiring_calibrations(),
         },
     )
@@ -126,12 +163,17 @@ def sample_create(request):
             return redirect("lab:sample_create")
         return redirect(sample)
 
-    methods = _ordered_methods(form.fields["tests"].queryset)
+    methods = _ordered_methods(form.fields["tests"].queryset, INTAKE_GROUP_ORDER)
     selected = {str(v) for v in (form["tests"].value() or [])}
     return render(
         request,
         "lab/sample_form.html",
-        {"form": form, "test_groups": _grouped(methods), "selected": selected},
+        {
+            "form": form,
+            "test_groups": _grouped(methods),
+            "selected": selected,
+            "single_component": sorted(ChoiceOption.single_component_keys()),
+        },
     )
 
 
@@ -255,8 +297,7 @@ def report_create(request, pk):
     samples.sort(key=lambda s: (s.julian, s.sequence))
     report = Report.objects.create(
         report_number=Report.next_number(samples[0]),
-        recipient_email=sample.requested_by_email,
-        cc_emails=sample.cc_emails,
+        recipient_email=sample.requested_by_name,
         created_by=request.user,
     )
     report.samples.set(samples)

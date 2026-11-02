@@ -56,8 +56,6 @@ class SampleForm(forms.ModelForm):
             "lot_number",
             "unit_id",
             "requested_by_name",
-            "requested_by_email",
-            "cc_emails",
             "lto",
             "sample_type",
             "sample_type_other",
@@ -75,7 +73,6 @@ class SampleForm(forms.ModelForm):
         labels = {
             "submitter": "Submitted by",
             "requested_by_name": "Engineer requesting testing",
-            "requested_by_email": "Send report to (email)",
             "lto": "Associated eLTO",
             "phase": "Sample type (refrigerant)",
             "comments": "Any additional pertinent information",
@@ -100,6 +97,8 @@ class SampleForm(forms.ModelForm):
         self.fields["submitter"].required = True
         self.fields["submitter"].help_text = "The tech from the testing facility who brought the sample."
         self.fields["sampled_on"].required = True
+        self.fields["lto"].required = True
+        self.fields["requested_by_name"].help_text = "The report email is addressed to this name; Outlook fills in the address."
         self.fields["blend"].queryset = Blend.objects.filter(active=True)
         self.fields["blend"].required = False
         self.fields["blend"].help_text = "Picked automatically when the refrigerant type matches a blend."
@@ -176,7 +175,6 @@ class SampleForm(forms.ModelForm):
                 self._require("unit_id", "Enter the unit ID.")
             lubricant = self._pick("lubricant", True, "Choose the lubricant type.")
             self._require("requested_by_name", "Enter the engineer requesting testing.")
-            self._require("lto", "Enter the associated eLTO.")
             self._require("sample_type", "Choose the sample type.")
 
         sample_type = cleaned.get("sample_type")
@@ -226,7 +224,11 @@ class SampleIntakeForm(SampleForm):
             wrong = [t.name for t in tests if not t.applies(kind)]
             if wrong:
                 self.add_error("tests", "Not available for this sample type: " + ", ".join(wrong) + ".")
-        if any(t.calc_type == TestMethod.CALC_BLEND for t in tests) and not cleaned.get("blend"):
+        blend_requested = any(t.calc_type == TestMethod.CALC_BLEND for t in tests)
+        refrigerant = self.instance.refrigerant_type
+        if blend_requested and ChoiceOption.name_key(refrigerant) in ChoiceOption.single_component_keys():
+            self.add_error("tests", f"{refrigerant} is a single-component refrigerant: Blend Analysis can't be requested.")
+        elif blend_requested and not cleaned.get("blend"):
             self.add_error(
                 "blend",
                 "Choose the blend. If it isn't listed, add it with its components under Admin → Blends.",
@@ -390,7 +392,9 @@ class FormulaForm(forms.ModelForm):
 class ReportForm(forms.ModelForm):
     class Meta:
         model = Report
-        fields = ["recipient_email", "cc_emails", "notes"]
+        fields = ["recipient_email", "notes"]
         widgets = {"notes": forms.Textarea(attrs={"rows": 3})}
         labels = {"recipient_email": "To"}
-        help_texts = {"recipient_email": "Separate addresses with ;"}
+        help_texts = {
+            "recipient_email": "The engineer's name (Outlook looks up the address). Add anyone to CC in Outlook."
+        }

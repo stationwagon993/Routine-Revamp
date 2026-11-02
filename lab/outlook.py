@@ -12,8 +12,9 @@ from pathlib import Path
 from django.conf import settings
 
 
-def _addresses(raw):
-    return [a.strip() for a in raw.replace(",", ";").split(";") if a.strip()]
+def _recipients(raw):
+    # Names as well as addresses, so only ; separates them ("Lee, Jordan" is one name).
+    return [a.strip() for a in raw.split(";") if a.strip()]
 
 
 def compose(report):
@@ -27,8 +28,7 @@ def compose(report):
     if settings.EMAIL_SIGNATURE:
         body += "\n\n" + settings.EMAIL_SIGNATURE
     return {
-        "to": _addresses(report.recipient_email),
-        "cc": _addresses(report.cc_emails),
+        "to": _recipients(report.recipient_email),
         "subject": subject,
         "body": body,
         "attachment": Path(report.pdf_path),
@@ -49,7 +49,7 @@ def open_in_outlook(report):
         outlook = win32com.client.Dispatch("Outlook.Application")
         mail = outlook.CreateItem(0)  # 0 = olMailItem
         mail.To = "; ".join(draft["to"])
-        mail.CC = "; ".join(draft["cc"])
+        mail.Recipients.ResolveAll()  # Look the engineer's name up in the address book.
         mail.Subject = draft["subject"]
         mail.Body = draft["body"]
         mail.Attachments.Add(str(draft["attachment"].resolve()))
@@ -65,9 +65,7 @@ def eml_bytes(report):
     """An unsent email (.eml) with the report PDF attached."""
     draft = compose(report)
     message = EmailMessage()
-    message["To"] = ", ".join(draft["to"])
-    if draft["cc"]:
-        message["Cc"] = ", ".join(draft["cc"])
+    message["To"] = "; ".join(draft["to"])
     message["Subject"] = draft["subject"]
     # Tells Outlook to open the file as an editable draft with a Send button.
     message["X-Unsent"] = "1"

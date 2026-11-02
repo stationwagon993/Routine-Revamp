@@ -20,7 +20,7 @@ Intake form ─► Sample log row (status per test)
 
 | Page | What it does |
 |---|---|
-| **Sample Log** | The spreadsheet grid: one row per sample, one column per test, same colours (yellow *requested*, green *completed* with initials, orange *needs compiling*, red *cancelled*, blue *oldest in process*). Search, filter to in-process samples, click a row to open it. |
+| **Sample Log** | The spreadsheet grid: one row per sample, one column per test, same colours (yellow *requested*, green *completed* with initials, orange *needs compiling*, red *cancelled*, blue *oldest in process*). Search; filter to in-process samples, by testing still needed, by received date or by Julian code; click a row to open it. |
 | **New Sample** | Intake form. Sample numbers are assigned automatically from the received date (Julian date + sequence, e.g. `26188-2`). *Results Reported* is added to every sample. |
 | **Sample page** | One card per test: enter raw data and see the result as you type. Results record who entered them, the formula version, and the calibration used. Status can be changed by hand. |
 | **Reports** | A report covers one sample or several (other samples with the same LTO # can be added). Generate PDF → Create Outlook draft → mark as sent. |
