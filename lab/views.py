@@ -52,6 +52,22 @@ def _grouped(methods):
     ]
 
 
+def _filter_summary(needed, date_from, date_to):
+    """What the sample log filter box shows while closed, like a dropdown's selected option."""
+    parts = []
+    if len(needed) == 1:
+        parts.append(f"Needs {needed[0].name}")
+    elif needed:
+        parts.append(f"Needs {len(needed)} tests")
+    if date_from and date_to:
+        parts.append(f"{date_from:%m/%d/%Y} – {date_to:%m/%d/%Y}")
+    elif date_from:
+        parts.append(f"From {date_from:%m/%d/%Y}")
+    elif date_to:
+        parts.append(f"Up to {date_to:%m/%d/%Y}")
+    return " · ".join(parts)
+
+
 def _date_param(request, name):
     try:
         return parse_date(request.GET.get(name, ""))
@@ -73,9 +89,6 @@ def sample_log(request):
         Prefetch("tests", queryset=SampleTest.objects.select_related("completed_by__lab_profile"))
     )
 
-    show = request.GET.get("show", "all")
-    if show == "open":
-        samples = samples.filter(pk__in=_open_samples())
     needed = [m for m in methods if str(m.pk) in request.GET.getlist("tests")]
     if needed:
         # Samples that still need any of the chosen tests.
@@ -90,9 +103,6 @@ def sample_log(request):
         samples = samples.filter(received_on__gte=date_from)
     if date_to:
         samples = samples.filter(received_on__lte=date_to)
-    julian = "".join(c for c in request.GET.get("julian", "") if c.isdigit())
-    if julian:
-        samples = samples.filter(julian__startswith=julian)
     query = request.GET.get("q", "").strip()
     if query:
         samples = samples.filter(
@@ -126,14 +136,11 @@ def sample_log(request):
             "rows": rows,
             "page": page,
             "oldest": oldest,
-            "show": show,
             "query": query,
-            "needed": needed,
             "needed_ids": {m.pk for m in needed},
             "date_from": date_from,
             "date_to": date_to,
-            "julian": julian,
-            "filtered": bool(needed or date_from or date_to or julian),
+            "filter_summary": _filter_summary(needed, date_from, date_to),
             "params": params.urlencode(),
             "expiring": _expiring_calibrations(),
         },

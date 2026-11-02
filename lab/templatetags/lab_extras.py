@@ -1,6 +1,23 @@
+from pathlib import Path
+
 from django import template
+from django.contrib.staticfiles import finders
+from django.templatetags.static import static
 
 register = template.Library()
+
+
+@register.simple_tag
+def asset(path):
+    """
+    Static file URL that changes whenever the file does, so browsers load the
+    new version after an update instead of a stale cached copy.
+    """
+    url = static(path)
+    found = finders.find(path)
+    if found:
+        url += f"?v={int(Path(found).stat().st_mtime)}"
+    return url
 
 
 @register.filter

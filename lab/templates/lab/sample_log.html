@@ -13,27 +13,33 @@
   <h1 style="margin: 0 12px 0 0;">Sample Log</h1>
   <form method="get" class="actions" id="log-filters">
     <input type="text" name="q" value="{{ query }}" placeholder="Search sample #, ID, LTO, source…" size="32">
-    <select name="show" onchange="this.form.submit()">
-      <option value="all" {% if show == "all" %}selected{% endif %}>All samples</option>
-      <option value="open" {% if show == "open" %}selected{% endif %}>In process only</option>
-    </select>
     <details class="filter-menu">
-      <summary>Testing needed{% if needed %} ({{ needed|length }}){% endif %}</summary>
+      <summary{% if filter_summary %} class="active"{% endif %}>{{ filter_summary|default:"All samples" }}</summary>
       <div class="filter-menu-body">
-        <p class="muted">Samples that still need any of these tests:</p>
-        {% for group, methods in groups %}
-        <h3>{{ group }}</h3>
-        {% for m in methods %}
-        <label><input type="checkbox" name="tests" value="{{ m.pk }}" {% if m.pk in needed_ids %}checked{% endif %}> {{ m.name }}</label>
-        {% endfor %}
-        {% endfor %}
+        <div class="filter-section">
+          <h3>Received date</h3>
+          <div class="filter-dates">
+            <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" aria-label="Received from">
+            <span>to</span>
+            <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" aria-label="Received to">
+          </div>
+        </div>
+        <div class="filter-section">
+          <h3>Testing needed <span class="muted">(choose all that apply)</span></h3>
+          {% for group, methods in groups %}
+          <div class="filter-group">{{ group }}</div>
+          {% for m in methods %}
+          <label><input type="checkbox" name="tests" value="{{ m.pk }}" {% if m.pk in needed_ids %}checked{% endif %}> {{ m.name }}</label>
+          {% endfor %}
+          {% endfor %}
+        </div>
+        <div class="filter-footer">
+          <a href="{% url 'lab:sample_log' %}{% if query %}?q={{ query|urlencode }}{% endif %}">Clear</a>
+          <button type="submit">Apply</button>
+        </div>
       </div>
     </details>
-    <label class="inline">Received <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}"></label>
-    <label class="inline">to <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}"></label>
-    <label class="inline">Julian <input type="text" name="julian" value="{{ julian }}" placeholder="e.g. 26299" size="7" inputmode="numeric"></label>
     <button type="submit" class="secondary">Search</button>
-    {% if query or filtered or show != "all" %}<a href="{% url 'lab:sample_log' %}">Clear</a>{% endif %}
   </form>
   <span class="spacer" style="flex:1"></span>
   <a class="btn" href="{% url 'lab:sample_create' %}">+ New sample</a>
@@ -88,7 +94,7 @@
       {% endfor %}
     </tr>
     {% empty %}
-    <tr><td colspan="99" class="muted" style="padding: 16px;">{% if query or filtered or show != "all" %}No samples match. <a href="{% url 'lab:sample_log' %}">Clear the filters.</a>{% else %}No samples yet. <a href="{% url 'lab:sample_create' %}">Log the first sample.</a>{% endif %}</td></tr>
+    <tr><td colspan="99" class="muted" style="padding: 16px;">{% if query or filter_summary %}No samples match. <a href="{% url 'lab:sample_log' %}">Clear the filters.</a>{% else %}No samples yet. <a href="{% url 'lab:sample_create' %}">Log the first sample.</a>{% endif %}</td></tr>
     {% endfor %}
   </tbody>
 </table>

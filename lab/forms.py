@@ -95,10 +95,10 @@ class SampleForm(forms.ModelForm):
         self.fields["sample_type"].choices = Sample.TYPE_CHOICES
         self.fields["phase"].choices = Sample.PHASE_CHOICES[1:]
         self.fields["submitter"].required = True
-        self.fields["submitter"].help_text = "The tech from the testing facility who brought the sample."
+        self.fields["submitter"].help_text = ""
         self.fields["sampled_on"].required = True
         self.fields["lto"].required = True
-        self.fields["requested_by_name"].help_text = "The report email is addressed to this name; Outlook fills in the address."
+        self.fields["requested_by_name"].help_text = ""
         self.fields["blend"].queryset = Blend.objects.filter(active=True)
         self.fields["blend"].required = False
         self.fields["blend"].help_text = "Picked automatically when the refrigerant type matches a blend."

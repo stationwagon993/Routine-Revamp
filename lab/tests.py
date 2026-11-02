@@ -322,6 +322,7 @@ class ViewTests(LabTestCase):
         self.assertEqual(form["submitter"].value(), None)  # typed in, not the logged-in user
         self.assertNotIn("reason", form.fields)
         self.assertNotIn("identification", form.fields)
+        self.assertEqual(form["submitter"].help_text, "")
         offered = set(form.fields["tests"].queryset.values_list("name", flat=True))
         self.assertNotIn("Miscellaneous", offered)
         self.assertNotIn("Test Plan Submitted", offered)
@@ -410,8 +411,10 @@ class ViewTests(LabTestCase):
         self.assertEqual(shown(tests=[moisture.pk, tan.pk]), {a.pk, b.pk})
         self.assertEqual(shown(**{"from": "2026-10-27"}), {b.pk, c.pk})
         self.assertEqual(shown(**{"from": "2026-10-26", "to": "2026-10-27"}), {a.pk, b.pk})
-        self.assertEqual(shown(julian="26301"), {c.pk})
-        self.assertEqual(shown(**{"from": "2026-02-30", "julian": "abc"}), {a.pk, b.pk, c.pk})
+        self.assertEqual(shown(**{"from": "2026-02-30"}), {a.pk, b.pk, c.pk})
+        summary = self.client.get(reverse("lab:sample_log"), {"tests": [moisture.pk], "from": "2026-10-26"})
+        self.assertEqual(summary.context["filter_summary"], "Needs Moisture · From 10/26/2026")
+        self.assertContains(self.client.get(reverse("lab:sample_log")), "All samples")
 
         page = self.client.get(reverse("lab:sample_log")).content.decode()
         headers = ["LTO", "Refrigerant Type", "Lubricant", "Sample Date", "Submitter", "Engineer", "Comments"]
@@ -443,7 +446,7 @@ class ViewTests(LabTestCase):
         report.samples.add(sample)
         urls = [
             reverse("lab:sample_log"),
-            reverse("lab:sample_log") + "?show=open&q=water",
+            reverse("lab:sample_log") + "?q=water&from=2026-07-01&tests=1",
             reverse("lab:sample_create"),
             sample.get_absolute_url(),
             reverse("lab:sample_edit", args=[sample.pk]),

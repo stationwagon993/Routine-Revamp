@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Routine Revamp{% endblock %} · {{ LAB_NAME }}</title>
-  <link rel="stylesheet" href="{% static 'lab/style.css' %}">
+  <link rel="stylesheet" href="{% asset 'lab/style.css' %}">
 </head>
 <body>
   {% if user.is_authenticated %}
@@ -31,6 +31,6 @@
     {% endif %}
     {% block content %}{% endblock %}
   </main>
-  <script src="{% static 'lab/app.js' %}"></script>
+  <script src="{% asset 'lab/app.js' %}"></script>
 </body>
 </html>
