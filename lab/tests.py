@@ -433,7 +433,7 @@ class ViewTests(LabTestCase):
 
         page = self.client.get(reverse("lab:sample_log")).content.decode()
         headers = ["LTO", "Refrigerant Type", "Lubricant", "Sample Date", "Submitter", "Engineer", "Comments"]
-        positions = [page.index(f"<th>{h}</th>") for h in headers]
+        positions = [page.index(f">{h}</th>") for h in headers]
         self.assertEqual(positions, sorted(positions))
         for text in ["R-454B", "CPI 2931 AW", "10/25/2026", "Logan Kiasau", "Tejesh Dube"]:
             self.assertIn(text, page)
