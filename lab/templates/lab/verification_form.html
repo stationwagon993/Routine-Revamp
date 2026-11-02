@@ -10,12 +10,14 @@
     <div class="form-grid">
       {% include "lab/_field.html" with field=form.standard_cylinder %}
       {% include "lab/_field.html" with field=form.performed_on %}
+      {% include "lab/_field.html" with field=form.max_error_percent %}
       {% include "lab/_field.html" with field=form.notes wide=True %}
     </div>
   </div>
   <div class="panel">
     <h2>Verification run</h2>
-    <p class="muted">Each component passes if its calculated % (peak area × response factor) is within the tolerance of the theoretical %.</p>
+    <p class="muted">Calculated % = peak area × response factor, normalized so the components add up to 100%.
+      Each component passes if its % error (|calculated − theoretical| ÷ theoretical × 100) is at or below the allowed % error.</p>
     <table class="data">
       <tr><th>Component</th><th>Response factor</th><th>Theoretical %</th><th>Peak area</th></tr>
       {% for cc, theoretical, area in form.component_rows %}

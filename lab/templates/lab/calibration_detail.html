@@ -13,6 +13,7 @@
     <dt>Calibrated by</dt><dd>{{ calibration.performed_by|person }}</dd>
     <dt>Standard cylinder</dt><dd>{{ calibration.standard_cylinder }}</dd>
     <dt>Expires</dt><dd>{{ calibration.expires_on|date:"m/d/Y" }}</dd>
+    <dt>Allowed % error</dt><dd>{% if calibration.blend.max_error_percent is not None %}{{ calibration.blend.max_error_percent|floatformat:"-4" }}% <span class="muted">(set for {{ calibration.blend }}; changed when running a verification)</span>{% else %}<span class="muted">Not set yet – entered with the first verification.</span>{% endif %}</dd>
     {% if calibration.notes %}<dt>Notes</dt><dd>{{ calibration.notes|linebreaksbr }}</dd>{% endif %}
   </dl>
 </div>
@@ -41,16 +42,18 @@
     {% if not calibration.is_expired %}<a class="btn small" href="{% url 'lab:verification_create' calibration.pk %}">+ Run verification</a>{% endif %}
   </div>
   {% for v in verifications %}
-  <h3>{{ v.performed_on|date:"m/d/Y" }} by {{ v.performed_by|person }} {% if v.passed %}<span class="pill pass">Pass</span>{% else %}<span class="pill fail">Fail</span>{% endif %}</h3>
+  <h3>{{ v.performed_on|date:"m/d/Y" }} by {{ v.performed_by|person }} {% if v.passed %}<span class="pill pass">Pass</span>{% else %}<span class="pill fail">Fail</span>{% endif %}
+    <span class="muted" style="font-weight: 400; font-size: 13px;">{% if v.uses_percent_error %}allowed error {{ v.max_error_percent|floatformat:"-4" }}%{% else %}older verification: within ±{{ legacy_tolerance }} points, not normalized{% endif %}</span></h3>
   <table class="data" style="margin-bottom: 12px;">
-    <tr><th>Component</th><th>Theoretical %</th><th>Peak area</th><th>Calculated %</th><th>Difference</th><th></th></tr>
-    {% for vc in v.components.all %}
+    <tr><th>Component</th><th>Theoretical %</th><th>Peak area</th><th>Calculated %</th><th>Difference</th>{% if v.uses_percent_error %}<th>% error</th>{% endif %}<th></th></tr>
+    {% for vc in v.component_rows %}
     <tr>
       <td>{{ vc.calibration_component.component.name }}</td>
       <td class="num">{{ vc.theoretical_percent|num:4 }}</td>
       <td class="num">{{ vc.peak_area|num:2 }}</td>
       <td class="num">{{ vc.calculated_percent|num:4 }}</td>
       <td class="num">{{ vc.difference|signed:4 }}</td>
+      {% if v.uses_percent_error %}<td class="num">{{ vc.percent_error|num:3 }}%</td>{% endif %}
       <td>{% if vc.passed %}<span class="pill pass">Pass</span>{% else %}<span class="pill fail">Fail</span>{% endif %}</td>
     </tr>
     {% endfor %}

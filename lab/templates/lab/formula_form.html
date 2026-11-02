@@ -1,7 +1,7 @@
 {% extends "lab/base.html" %}
 {% block title %}{{ method.name }} formula{% endblock %}
 {% block content %}
-<h1>{{ method.name }} formula{% if current %} – new version (current is v{{ current.version }}){% endif %}</h1>
+<h1>{{ method.name }} formula{% if pressure_label %} for {{ pressure_label|lower }}{% endif %}{% if current %} – new version (current is v{{ current.version }}){% endif %}</h1>
 <form method="post" class="panel">
   {% csrf_token %}
   {{ form.non_field_errors }}

@@ -282,14 +282,22 @@ class VerificationForm(forms.ModelForm):
             "notes": forms.Textarea(attrs={"rows": 2}),
         }
 
+    max_error_percent = forms.FloatField(
+        label="Allowed % error",
+        min_value=0,
+        help_text="Saved for the blend and used for its future verifications.",
+    )
+
     def __init__(self, *args, calibration, **kwargs):
         super().__init__(*args, **kwargs)
         self.calibration = calibration
         self.fields["standard_cylinder"].initial = calibration.standard_cylinder
+        self.fields["max_error_percent"].initial = calibration.blend.max_error_percent
         self.component_rows = []
         for cc in calibration.components.select_related("component"):
+            # % error is relative to the theoretical %, so it can't be zero.
             self.fields[f"theoretical_{cc.pk}"] = forms.FloatField(
-                min_value=0, max_value=100, initial=cc.standard_percent
+                min_value=0.0001, max_value=100, initial=cc.standard_percent
             )
             self.fields[f"area_{cc.pk}"] = forms.FloatField(min_value=0)
             self.component_rows.append(

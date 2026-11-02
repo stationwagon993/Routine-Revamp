@@ -35,7 +35,7 @@ admin.site.register(User, UserAdmin)
 
 @admin.register(TestMethod)
 class TestMethodAdmin(admin.ModelAdmin):
-    list_display = ["name", "code", "group", "calc_type", "applies_to", "display_order", "on_every_sample", "active"]
+    list_display = ["name", "code", "group", "calc_type", "applies_to", "display_order", "on_every_sample", "formula_by_pressure", "active"]
     list_editable = ["code", "applies_to", "display_order", "active"]
     list_filter = ["group", "calc_type", "active"]
 
@@ -44,10 +44,11 @@ class TestMethodAdmin(admin.ModelAdmin):
 class FormulaAdmin(admin.ModelAdmin):
     """Formulas are versioned: create new versions from the Formulas page, not here."""
 
-    list_display = ["test_method", "version", "expression", "result_unit", "is_placeholder", "active"]
-    list_filter = ["test_method", "is_placeholder", "active"]
+    list_display = ["test_method", "pressure", "version", "expression", "result_unit", "is_placeholder", "active"]
+    list_filter = ["test_method", "pressure", "is_placeholder", "active"]
     readonly_fields = [
         "test_method",
+        "pressure",
         "version",
         "expression",
         "inputs",
@@ -68,7 +69,7 @@ class BlendComponentInline(admin.TabularInline):
 
 @admin.register(Blend)
 class BlendAdmin(admin.ModelAdmin):
-    list_display = ["name", "description", "active"]
+    list_display = ["name", "description", "max_error_percent", "active"]
     inlines = [BlendComponentInline]
 
 

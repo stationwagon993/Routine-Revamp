@@ -2,6 +2,7 @@ from datetime import timedelta
 from itertools import groupby
 from pathlib import Path
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
@@ -216,7 +217,7 @@ def sample_detail(request, pk):
     for test in tests:
         formula = None
         if test.test_method.calc_type == TestMethod.CALC_FORMULA:
-            formula = test.test_method.current_formula()
+            formula = test.test_method.current_formula(sample.pressure)
         previous = {}
         for result in test.results.all():
             previous.update({k: v for k, v in result.inputs.items()})
@@ -499,6 +500,7 @@ def calibration_detail(request, pk):
                 "components__calibration_component__component"
             ),
             "samples": Sample.objects.filter(tests__calibration=calibration).distinct(),
+            "legacy_tolerance": settings.VERIFICATION_TOLERANCE,
         },
     )
 
@@ -512,9 +514,13 @@ def verification_create(request, pk):
     form = VerificationForm(request.POST or None, calibration=calibration)
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
+            blend = calibration.blend
+            blend.max_error_percent = form.cleaned_data["max_error_percent"]
+            blend.save(update_fields=["max_error_percent"])
             verification = form.save(commit=False)
             verification.calibration = calibration
             verification.performed_by = request.user
+            verification.max_error_percent = blend.max_error_percent
             verification.save()
             for cc, values in form.component_values():
                 VerificationComponent.objects.create(
@@ -544,9 +550,14 @@ def formula_list(request):
 @login_required
 def formula_new_version(request, method_pk):
     method = get_object_or_404(TestMethod, pk=method_pk, calc_type=TestMethod.CALC_FORMULA)
-    current = method.current_formula()
+    pressure = request.GET.get("pressure", "") if method.formula_by_pressure else ""
+    if pressure not in dict(Formula.PRESSURE_CHOICES):
+        raise Http404("Unknown pressure.")
+    if method.formula_by_pressure and not pressure:
+        pressure = Formula.PRESSURE_HIGH
+    current = method.current_formula(pressure)
     # Always a new, unsaved version, pre-filled from the current one.
-    draft = Formula(test_method=method)
+    draft = Formula(test_method=method, pressure=pressure)
     if current:
         draft.expression = current.expression
         draft.inputs = current.inputs
@@ -555,11 +566,15 @@ def formula_new_version(request, method_pk):
     form = FormulaForm(request.POST or None, instance=draft)
     if request.method == "POST" and form.is_valid():
         formula = form.save(commit=False)
-        formula.version = (method.formulas.aggregate(v=Max("version"))["v"] or 0) + 1
+        formula.version = (
+            method.formulas.filter(pressure=pressure).aggregate(v=Max("version"))["v"] or 0
+        ) + 1
         formula.created_by = request.user
         formula.save()
-        messages.success(request, f"{method.name} formula version {formula.version} saved.")
+        messages.success(request, f"{formula} saved.")
         return redirect("lab:formula_list")
     return render(
-        request, "lab/formula_form.html", {"form": form, "method": method, "current": current}
+        request,
+        "lab/formula_form.html",
+        {"form": form, "method": method, "current": current, "pressure_label": draft.get_pressure_display() if pressure else ""},
     )

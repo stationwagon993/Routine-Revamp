@@ -6,6 +6,7 @@ from django.conf import settings
 from django.db import models, transaction
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.functional import cached_property
 
 from . import formulas
 
@@ -90,6 +91,11 @@ class TestMethod(models.Model):
             "Blank = offered for every sample."
         ),
     )
+    formula_by_pressure = models.BooleanField(
+        "separate formulas by refrigerant pressure",
+        default=False,
+        help_text="One formula for low-pressure refrigerants and one for high/medium-pressure (e.g. HBR).",
+    )
 
     class Meta:
         ordering = ["display_order", "name"]
@@ -107,8 +113,17 @@ class TestMethod(models.Model):
     def has_results(self):
         return self.calc_type != self.CALC_TRACKING
 
-    def current_formula(self):
-        return self.formulas.filter(active=True).order_by("-version").first()
+    def current_formula(self, pressure=""):
+        """The latest formula; for tests split by pressure, the one for that pressure."""
+        if not self.formula_by_pressure:
+            pressure = ""
+        return self.formulas.filter(active=True, pressure=pressure).order_by("-version").first()
+
+    def pressure_formulas(self):
+        """[(pressure, label, current formula)] for the Formulas page."""
+        if not self.formula_by_pressure:
+            return [("", "", self.current_formula())]
+        return [(p, label, self.current_formula(p)) for p, label in Formula.PRESSURE_CHOICES[1:]]
 
 
 class Formula(models.Model):
@@ -118,7 +133,16 @@ class Formula(models.Model):
     at the exact formula that produced them.
     """
 
+    PRESSURE_LOW = "low"
+    PRESSURE_HIGH = "high"
+    PRESSURE_CHOICES = [
+        ("", "All samples"),
+        (PRESSURE_LOW, "Low-pressure refrigerants"),
+        (PRESSURE_HIGH, "High/medium-pressure refrigerants"),
+    ]
+
     test_method = models.ForeignKey(TestMethod, on_delete=models.PROTECT, related_name="formulas")
+    pressure = models.CharField(max_length=10, choices=PRESSURE_CHOICES, blank=True, default="")
     version = models.PositiveIntegerField()
     expression = models.TextField()
     # [{"name": "mass_g", "label": "Sample mass", "unit": "g"}, ...]
@@ -138,10 +162,14 @@ class Formula(models.Model):
     class Meta:
         ordering = ["test_method", "-version"]
         constraints = [
-            models.UniqueConstraint(fields=["test_method", "version"], name="unique_formula_version")
+            models.UniqueConstraint(
+                fields=["test_method", "pressure", "version"], name="unique_formula_version"
+            )
         ]
 
     def __str__(self):
+        if self.pressure:
+            return f"{self.test_method.name} ({self.get_pressure_display()}) v{self.version}"
         return f"{self.test_method.name} v{self.version}"
 
     @property
@@ -167,6 +195,13 @@ class Blend(models.Model):
     name = models.CharField(max_length=50, unique=True)
     description = models.CharField(max_length=200, blank=True)
     active = models.BooleanField(default=True)
+    max_error_percent = models.FloatField(
+        "allowed verification error (%)",
+        null=True,
+        blank=True,
+        help_text="A verification passes when every component's % error "
+        "(|calculated − theoretical| ÷ theoretical × 100) is at or below this.",
+    )
 
     class Meta:
         ordering = ["name"]
@@ -297,8 +332,20 @@ class CalibrationComponent(models.Model):
         return self.standard_percent / self.mean_area
 
 
+def normalized_percents(raw):
+    """Scale raw component percents so they add up to 100."""
+    total = sum(raw)
+    if total <= 0:
+        raise ValueError("The peak areas add up to zero.")
+    return [r / total * 100 for r in raw]
+
+
 class Verification(models.Model):
     calibration = models.ForeignKey(Calibration, on_delete=models.CASCADE, related_name="verifications")
+    # The blend's allowed % error when this verification was run, so changing it later
+    # doesn't change past results. Empty on verifications from before % error was used:
+    # those keep the old rule (unnormalized, within ±VERIFICATION_TOLERANCE points).
+    max_error_percent = models.FloatField("allowed error (%)", null=True, blank=True, editable=False)
     standard_cylinder = models.CharField(max_length=50, blank=True)
     performed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     performed_on = models.DateField(default=timezone.localdate)
@@ -312,8 +359,31 @@ class Verification(models.Model):
         return f"Verification of {self.calibration} on {self.performed_on:%Y-%m-%d}"
 
     @property
-    def passed(self):
+    def uses_percent_error(self):
+        return self.max_error_percent is not None
+
+    @cached_property
+    def calculated_percents(self):
+        """Calculated % per VerificationComponent id."""
+        components = list(self.components.select_related("calibration_component"))
+        raw = [c.raw_percent for c in components]
+        if self.uses_percent_error:
+            try:
+                raw = normalized_percents(raw)
+            except ValueError:
+                raw = [0.0] * len(raw)
+        return {c.pk: value for c, value in zip(components, raw)}
+
+    def component_rows(self):
+        """Components linked back to this object, so their % are worked out once."""
         components = list(self.components.all())
+        for c in components:
+            c.verification = self
+        return components
+
+    @property
+    def passed(self):
+        components = self.component_rows()
         return bool(components) and all(c.passed for c in components)
 
 
@@ -327,16 +397,29 @@ class VerificationComponent(models.Model):
         ordering = ["calibration_component__component__order"]
 
     @property
-    def calculated_percent(self):
+    def raw_percent(self):
         return self.peak_area * self.calibration_component.response_factor
+
+    @property
+    def calculated_percent(self):
+        """Normalized so the components add up to 100% (old verifications: unnormalized)."""
+        return self.verification.calculated_percents[self.pk]
 
     @property
     def difference(self):
         return self.calculated_percent - self.theoretical_percent
 
     @property
+    def percent_error(self):
+        if self.theoretical_percent == 0:
+            return 0.0 if self.calculated_percent == 0 else float("inf")
+        return abs(self.difference) / self.theoretical_percent * 100
+
+    @property
     def passed(self):
-        # Small epsilon so a difference of exactly the tolerance is not failed by float rounding.
+        # Small epsilon so an error of exactly the limit is not failed by float rounding.
+        if self.verification.uses_percent_error:
+            return self.percent_error <= self.verification.max_error_percent + 1e-9
         return abs(self.difference) <= settings.VERIFICATION_TOLERANCE + 1e-9
 
 
@@ -352,6 +435,8 @@ class ChoiceOption(models.Model):
     PLANT7_REFRIGERANT = "plant7_refrigerant"
     LAB11_CATEGORY = "lab11_category"
     GCS_STAND = "gcs_stand"
+    # Not a dropdown: the refrigerants that use the low-pressure formula (e.g. HBR).
+    LOW_PRESSURE = "low_pressure"
     LIST_CHOICES = [
         (REFRIGERANT, "Refrigerant types"),
         (LUBRICANT, "Lubricant types"),
@@ -359,6 +444,7 @@ class ChoiceOption(models.Model):
         (PLANT7_REFRIGERANT, "Plant 7 refrigerant types"),
         (LAB11_CATEGORY, "Lab 11 areas"),
         (GCS_STAND, "Compressor test stands (GCS)"),
+        (LOW_PRESSURE, "Low-pressure refrigerants (pressure-based formulas)"),
     ]
 
     list_name = models.CharField("list", max_length=30, choices=LIST_CHOICES)
@@ -392,6 +478,12 @@ class ChoiceOption(models.Model):
     def name_key(name):
         """Refrigerant names compared ignoring case, spaces, dashes and brackets: R-1233zd(E) = r1233zde."""
         return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+    @classmethod
+    def is_low_pressure(cls, refrigerant_type):
+        key = cls.name_key(refrigerant_type)
+        labels = cls.objects.filter(list_name=cls.LOW_PRESSURE, active=True).values_list("label", flat=True)
+        return bool(key) and key in {cls.name_key(label) for label in labels}
 
     @classmethod
     def single_component_keys(cls):
@@ -483,6 +575,13 @@ class Sample(models.Model):
 
     def get_absolute_url(self):
         return reverse("lab:sample_detail", args=[self.pk])
+
+    @property
+    def pressure(self):
+        """Which formula a pressure-dependent test uses: low or high (high/medium) pressure."""
+        if ChoiceOption.is_low_pressure(self.refrigerant_type):
+            return Formula.PRESSURE_LOW
+        return Formula.PRESSURE_HIGH
 
     @property
     def kind(self):

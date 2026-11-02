@@ -233,3 +233,4 @@ dl.info dd { margin: 0; }
 .radios .field > div input { width: auto; }
 [hidden] { display: none !important; }
 .test-group + .test-group { margin-top: 8px; }
+.formula-variant + .formula-variant { border-top: 1px solid #e5e9ee; margin-top: 10px; padding-top: 10px; }

@@ -4,7 +4,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from . import formulas
-from .models import Formula, Report, SampleTest, TestMethod, TestResult
+from .models import Formula, Report, SampleTest, TestMethod, TestResult, normalized_percents
 
 # Tracking test that is completed automatically when a report is sent.
 RESULTS_REPORTED = "Results Reported"
@@ -16,20 +16,28 @@ class ResultError(ValueError):
 
 def blend_results(calibration, areas):
     """
-    Composition of a sample from its peak areas and a calibration.
+    Composition of a sample from its peak areas and a calibration: peak area ×
+    response factor for each component, normalized so the components add up to 100%.
 
     ``areas`` maps CalibrationComponent id -> peak area. Returns a list of
     (calibration_component, area, percent) in component order.
     """
-    rows = []
+    components, peak_areas = [], []
     for component in calibration.components.select_related("component"):
         raw = areas.get(component.pk)
         try:
             area = float(raw)
         except (TypeError, ValueError) as exc:
             raise ResultError(f"Peak area for {component.component.name} must be a number.") from exc
-        rows.append((component, area, area * component.response_factor))
-    return rows
+        if area < 0:
+            raise ResultError(f"Peak area for {component.component.name} can't be negative.")
+        components.append(component)
+        peak_areas.append(area)
+    try:
+        percents = normalized_percents([a * c.response_factor for c, a in zip(components, peak_areas)])
+    except ValueError as exc:
+        raise ResultError(str(exc)) from exc
+    return list(zip(components, peak_areas, percents))
 
 
 def calculate_formula(formula, values):

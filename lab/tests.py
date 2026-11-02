@@ -134,6 +134,32 @@ class CalibrationTests(LabTestCase):
         self.assertEqual(cal.status, Calibration.STATUS_FAILED)
         self.assertIsNone(self.blend.active_calibration())
 
+    def verify(self, cal, cc32, cc125, areas, theoretical=(50.0, 50.0), max_error=1.0):
+        v = Verification.objects.create(calibration=cal, performed_by=self.user, max_error_percent=max_error)
+        for cc, area, theo in zip((cc32, cc125), areas, theoretical):
+            VerificationComponent.objects.create(
+                verification=v, calibration_component=cc, theoretical_percent=theo, peak_area=area
+            )
+        return v
+
+    def test_verification_percent_error_is_relative_and_normalized(self):
+        cal, cc32, cc125 = self.make_calibration(verify=False)  # response factor 5.0 for both
+        # Raw 51% + 51% = 102% -> normalized 50/50: no error even though the raw values are off.
+        v = self.verify(cal, cc32, cc125, areas=(10.2, 10.2))
+        r32, r125 = v.component_rows()
+        self.assertAlmostEqual(r32.calculated_percent, 50.0)
+        self.assertAlmostEqual(r32.percent_error, 0.0)
+        self.assertTrue(v.passed)
+        # 30/70 standard measured as 30.3/69.7: R-32 is off by 1.0% of 30, R-125 by 0.43%.
+        v = self.verify(cal, cc32, cc125, areas=(6.06, 13.94), theoretical=(30.0, 70.0), max_error=1.0)
+        r32, r125 = v.component_rows()
+        self.assertAlmostEqual(r32.calculated_percent, 30.3)
+        self.assertAlmostEqual(r32.percent_error, 1.0)
+        self.assertTrue(v.passed)  # exactly at the limit passes
+        v = self.verify(cal, cc32, cc125, areas=(6.06, 13.94), theoretical=(30.0, 70.0), max_error=0.9)
+        self.assertFalse(v.passed)
+        self.assertEqual(cal.status, Calibration.STATUS_FAILED)  # latest verification decides
+
     def test_unverified_and_expired_are_not_active(self):
         self.make_calibration(verify=False)
         self.make_calibration(on=datetime.date.today() - datetime.timedelta(days=200))
@@ -179,6 +205,34 @@ class ResultTests(LabTestCase):
         self.assertAlmostEqual(values["R-125"], 49.0)
         test.refresh_from_db()
         self.assertEqual(test.calibration, cal)
+
+    def test_blend_results_are_normalized_to_100(self):
+        cal, cc32, cc125 = self.make_calibration()
+        test = self.add_test(self.make_sample(), "Blend Analysis")
+        services.save_results(test, self.user, {f"area_{cc32.pk}": "12", f"area_{cc125.pk}": "8.4"})  # raw 60 + 42
+        values = {r.label: r.value for r in test.results.all()}
+        self.assertAlmostEqual(values["R-32"], 60 / 102 * 100)
+        self.assertAlmostEqual(values["R-125"], 42 / 102 * 100)
+        self.assertAlmostEqual(sum(values.values()), 100.0)
+
+    def test_hbr_formula_depends_on_refrigerant_pressure(self):
+        method = TestMethod.objects.get(name="High Boiling Residue")
+        self.assertTrue(method.formula_by_pressure)
+        high = method.current_formula(Formula.PRESSURE_HIGH)
+        self.assertIsNotNone(high)  # the existing formula became the high/medium-pressure one
+        self.assertIsNone(method.current_formula(Formula.PRESSURE_LOW))
+        low = Formula.objects.create(
+            test_method=method, pressure=Formula.PRESSURE_LOW, version=1,
+            expression="residue_g / mass_g * 50", inputs=high.inputs, result_unit="%",
+        )
+        for refrigerant, expected in [("R-1233zd(E)", low), ("R-1336MZZ(Z)", low), ("R-514A", low),
+                                      ("R-454B", high), ("R-999X", high), ("", high)]:
+            with self.subTest(refrigerant=refrigerant):
+                sample = self.make_sample(refrigerant_type=refrigerant)
+                self.assertEqual(method.current_formula(sample.pressure), expected)
+        # Other formula tests ignore pressure.
+        tan = TestMethod.objects.get(name="TAN")
+        self.assertEqual(tan.current_formula(Formula.PRESSURE_LOW), tan.current_formula())
 
     def test_manual_result(self):
         sample = self.make_sample()
@@ -518,11 +572,17 @@ class ViewTests(LabTestCase):
             {
                 "standard_cylinder": "STD-9",
                 "performed_on": datetime.date.today().isoformat(),
+                "max_error_percent": "1.5",
                 f"theoretical_{cc32.pk}": "50", f"area_{cc32.pk}": "10",
                 f"theoretical_{cc125.pk}": "50", f"area_{cc125.pk}": "20",
             },
         )
         self.assertEqual(self.blend.active_calibration(), cal)
+        self.blend.refresh_from_db()
+        self.assertEqual(self.blend.max_error_percent, 1.5)  # remembered for the blend
+        self.assertEqual(cal.latest_verification.max_error_percent, 1.5)
+        page = self.client.get(reverse("lab:verification_create", args=[cal.pk]))
+        self.assertEqual(page.context["form"]["max_error_percent"].value(), 1.5)
 
     def test_formula_new_version_through_view(self):
         method = TestMethod.objects.get(name="Acidity")
@@ -540,6 +600,20 @@ class ViewTests(LabTestCase):
         current = method.current_formula()
         self.assertEqual(current.version, 2)
         self.assertFalse(current.is_placeholder)
+
+    def test_low_pressure_formula_through_view(self):
+        method = TestMethod.objects.get(name="High Boiling Residue")
+        url = reverse("lab:formula_new_version", args=[method.pk]) + "?pressure=low"
+        data = {"inputs_text": "r | Residue | g\nm | Mass | g", "expression": "r / m * 100", "result_unit": "%", "decimals": "3"}
+        self.assertRedirects(self.client.post(url, data), reverse("lab:formula_list"))
+        low = method.current_formula(Formula.PRESSURE_LOW)
+        self.assertEqual((low.version, low.expression), (1, "r / m * 100"))
+        self.assertEqual(method.current_formula(Formula.PRESSURE_HIGH).version, 1)  # untouched
+        sample = self.make_sample(refrigerant_type="R-514A")
+        self.add_test(sample, "High Boiling Residue")
+        page = self.client.get(sample.get_absolute_url())
+        self.assertContains(page, "Low-pressure refrigerants formula")
+        self.assertContains(self.client.get(reverse("lab:formula_list")), "High/medium-pressure refrigerants")
 
     def test_formula_view_rejects_unsafe_expression(self):
         method = TestMethod.objects.get(name="Acidity")
