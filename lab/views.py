@@ -198,6 +198,11 @@ def sample_edit(request, pk):
 @login_required
 def sample_detail(request, pk):
     sample = get_object_or_404(Sample, pk=pk)
+    if sample.blend is None and sample.refrigerant_type:
+        # The blend may have been added in Admin since the sample was logged.
+        sample.blend = Blend.matching(sample.refrigerant_type)
+        if sample.blend:
+            sample.save(update_fields=["blend"])
     tests = list(
         sample.tests.select_related("test_method", "completed_by", "calibration").prefetch_related(
             "results__formula"

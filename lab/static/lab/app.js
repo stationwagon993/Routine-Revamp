@@ -87,6 +87,7 @@ document.querySelectorAll("form[data-calc-url]").forEach(function (form) {
     f.lab11 = origin === "Lab 11";
     f.system = origin !== "" && !f.tank && !f.drum;
     f.compressor = f.lab11 && value("lab11_area") === "Compressor Group";
+    f.unit = f.system && !f.compressor;
     f["general-refrigerant"] = f.tank || (f.system && !f.plant7);
     var type = f.tank ? "refrigerant" : f.drum ? "oil" : f.system ? value("sample_type") : "";
     f["refrigerant-sample"] = type === "refrigerant";
@@ -96,8 +97,6 @@ document.querySelectorAll("form[data-calc-url]").forEach(function (form) {
     var refrigerant = value(refrigerantField);
     if (refrigerant === OTHER) refrigerant = value(refrigerantField + "_other");
     f.singleComponent = singleComponent.indexOf(nameKey(refrigerant)) !== -1;
-    var blend = form.querySelector("input[data-blend]");
-    f["blend-requested"] = !blend || blend.checked;
     return f;
   }
 
@@ -126,9 +125,6 @@ document.querySelectorAll("form[data-calc-url]").forEach(function (form) {
     });
     var hint = document.getElementById("tests-hint");
     if (hint) hint.hidden = any;
-    var blend = form.querySelector("input[data-blend]");
-    var blendBox = form.querySelector('[data-when="blend-requested"]');
-    if (blendBox) blendBox.hidden = !(blend && blend.checked && !blend.closest("[hidden]"));
   }
 
   form.addEventListener("change", update);

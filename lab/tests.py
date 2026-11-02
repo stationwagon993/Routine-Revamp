@@ -374,11 +374,26 @@ class ViewTests(LabTestCase):
         self.assertIn("tests", response.context["form"].errors)
         self.assertFalse(Sample.objects.exists())
 
-    def test_blend_analysis_needs_a_known_blend(self):
-        blend = TestMethod.objects.get(name="Blend Analysis")
-        response = self.intake(origin="Plant 4", unit_id="U1", refrigerant="__other__", refrigerant_other="R-999X", sample_type="refrigerant", phase="liquid", tests=[blend.pk])
-        self.assertIn("blend", response.context["form"].errors)
-        self.assertFalse(Sample.objects.exists())
+    def test_blend_comes_from_refrigerant_and_can_be_added_later(self):
+        blend_test = TestMethod.objects.get(name="Blend Analysis")
+        page = self.client.get(reverse("lab:sample_create"))
+        self.assertNotIn("blend", page.context["form"].fields)
+        self.intake(origin="Plant 4", unit_id="U1", refrigerant="__other__", refrigerant_other="R-999X", sample_type="refrigerant", phase="liquid", tests=[blend_test.pk])
+        sample = Sample.objects.get()  # Logged even though R-999X isn't set up yet.
+        self.assertIsNone(sample.blend)
+        self.assertContains(self.client.get(sample.get_absolute_url()), "set up as a blend yet")
+        new_blend = Blend.objects.create(name="R-999X")
+        self.client.get(sample.get_absolute_url())
+        sample.refresh_from_db()
+        self.assertEqual(sample.blend, new_blend)
+
+    def test_no_unit_id_for_compressor_group(self):
+        moisture = TestMethod.objects.get(name="Moisture")
+        self.intake(origin="Lab 11", lab11_area="Compressor Group", gcs_stand="GCS 4", unit_id="stale",
+                    sample_type="refrigerant", phase="liquid", tests=[moisture.pk])
+        self.assertEqual(Sample.objects.get().unit_id, "")
+        response = self.intake(origin="Lab 11", lab11_area="Air Cooled Chiller", sample_type="refrigerant", phase="liquid", tests=[moisture.pk])
+        self.assertIn("unit_id", response.context["form"].errors)
 
     def test_edit_keeps_answers(self):
         tan = TestMethod.objects.get(name="TAN")

@@ -35,7 +35,7 @@
   <div class="panel" data-when="tank drum system">
     <h2>Sample</h2>
     <div class="form-grid">
-      <div data-when="system">{% include "lab/_field.html" with field=form.unit_id %}</div>
+      <div data-when="unit">{% include "lab/_field.html" with field=form.unit_id %}</div>
       <div data-when="plant7">{% include "lab/_field.html" with field=form.plant7_refrigerant %}</div>
       <div data-other-for="plant7_refrigerant">{% include "lab/_field.html" with field=form.plant7_refrigerant_other %}</div>
       <div data-when="general-refrigerant">{% include "lab/_field.html" with field=form.refrigerant %}</div>
@@ -72,11 +72,8 @@
       </div>
     </div>
     {% endfor %}
-    <div data-when="blend-requested" style="max-width: 320px; margin-top: 10px;">{% include "lab/_field.html" with field=form.blend %}</div>
     <p class="muted">“Results Reported” is added to every sample automatically.</p>
   </div>
-  {% else %}
-  <div class="panel" data-when="tank drum system" style="max-width: 360px;">{% include "lab/_field.html" with field=form.blend %}</div>
   {% endif %}
 
   <div class="actions">

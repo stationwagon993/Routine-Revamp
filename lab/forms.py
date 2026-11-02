@@ -18,17 +18,6 @@ from .models import (
 OTHER = "__other__"
 
 
-def _blend_for(refrigerant_type):
-    """The blend whose name matches a refrigerant type, ignoring case, spaces and dashes."""
-    key = re.sub(r"[^a-z0-9]", "", refrigerant_type.lower())
-    if not key:
-        return None
-    for blend in Blend.objects.filter(active=True):
-        if re.sub(r"[^a-z0-9]", "", blend.name.lower()) == key:
-            return blend
-    return None
-
-
 class SampleForm(forms.ModelForm):
     """
     The lab's sample submission form. Which questions apply depends on where the
@@ -61,7 +50,6 @@ class SampleForm(forms.ModelForm):
             "sample_type_other",
             "phase",
             "comments",
-            "blend",
         ]
         widgets = {
             "received_on": forms.DateInput(attrs={"type": "date"}),
@@ -76,7 +64,6 @@ class SampleForm(forms.ModelForm):
             "lto": "Associated eLTO",
             "phase": "Sample type (refrigerant)",
             "comments": "Any additional pertinent information",
-            "blend": "Blend for blend analysis",
         }
 
     def __init__(self, *args, **kwargs):
@@ -99,9 +86,6 @@ class SampleForm(forms.ModelForm):
         self.fields["sampled_on"].required = True
         self.fields["lto"].required = True
         self.fields["requested_by_name"].help_text = ""
-        self.fields["blend"].queryset = Blend.objects.filter(active=True)
-        self.fields["blend"].required = False
-        self.fields["blend"].help_text = "Picked automatically when the refrigerant type matches a blend."
         if self.instance.pk:
             self._load_dropdowns(self.instance)
 
@@ -171,7 +155,9 @@ class SampleForm(forms.ModelForm):
                 area = self._pick("lab11_area", True, "Choose the Lab 11 area.")
                 if area == Sample.COMPRESSOR_GROUP:
                     gcs = self._pick("gcs_stand", True, "Choose the compressor test stand.")
-            if area != Sample.COMPRESSOR_GROUP:
+            if area == Sample.COMPRESSOR_GROUP:
+                cleaned["unit_id"] = ""  # Compressor samples are identified by their test stand.
+            else:
                 self._require("unit_id", "Enter the unit ID.")
             lubricant = self._pick("lubricant", True, "Choose the lubricant type.")
             self._require("requested_by_name", "Enter the engineer requesting testing.")
@@ -187,14 +173,14 @@ class SampleForm(forms.ModelForm):
         else:
             cleaned["sample_type_other"] = ""
 
-        if refrigerant and not cleaned.get("blend"):
-            cleaned["blend"] = _blend_for(refrigerant)
-
         sample.origin = origin
         sample.origin_area = area
         sample.gcs_stand = gcs
         sample.refrigerant_type = refrigerant
         sample.lubricant_type = lubricant
+        # Blend analysis is always of the refrigerant entered above. If that blend isn't set up
+        # yet the sample is still logged; it picks the blend up once it's added in Admin.
+        sample.blend = Blend.matching(refrigerant)
         return cleaned
 
     def save(self, commit=True):
@@ -228,11 +214,6 @@ class SampleIntakeForm(SampleForm):
         refrigerant = self.instance.refrigerant_type
         if blend_requested and ChoiceOption.name_key(refrigerant) in ChoiceOption.single_component_keys():
             self.add_error("tests", f"{refrigerant} is a single-component refrigerant: Blend Analysis can't be requested.")
-        elif blend_requested and not cleaned.get("blend"):
-            self.add_error(
-                "blend",
-                "Choose the blend. If it isn't listed, add it with its components under Admin → Blends.",
-            )
         return cleaned
 
 

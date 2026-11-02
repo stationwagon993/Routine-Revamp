@@ -174,6 +174,17 @@ class Blend(models.Model):
     def __str__(self):
         return self.name
 
+    @classmethod
+    def matching(cls, refrigerant_type):
+        """The active blend named like a refrigerant type (R-454B = r454b), or None."""
+        key = ChoiceOption.name_key(refrigerant_type)
+        if not key:
+            return None
+        for blend in cls.objects.filter(active=True):
+            if ChoiceOption.name_key(blend.name) == key:
+                return blend
+        return None
+
     def active_calibration(self, on=None):
         """Latest unexpired calibration of this blend with a passing verification."""
         on = on or timezone.localdate()

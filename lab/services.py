@@ -65,7 +65,10 @@ def compute_results(sample_test, data):
     if method.calc_type == TestMethod.CALC_BLEND:
         blend = sample_test.sample.blend
         if blend is None:
-            raise ResultError("Set the sample's blend before entering blend analysis data.")
+            raise ResultError(
+                f"{sample_test.sample.refrigerant_type or 'This refrigerant'} isn't set up as a blend yet. "
+                "Add it with its components under Admin → Blends."
+            )
         calibration = blend.active_calibration()
         if calibration is None:
             raise ResultError(

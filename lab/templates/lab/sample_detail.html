@@ -67,7 +67,7 @@
 
         {% elif method.calc_type == "blend" %}
           {% if not sample.blend %}
-          <p class="muted">Set the sample's blend (<a href="{% url 'lab:sample_edit' sample.pk %}">edit sample</a>) to enter blend analysis data.</p>
+          <div class="banner-warn">{{ sample.refrigerant_type|default:"This sample's refrigerant" }} isn't set up as a blend yet. Add it with its components under <a href="{% url 'admin:lab_blend_add' %}">Admin → Blends</a>; this sample picks it up automatically.</div>
           {% elif not calibration %}
           <div class="banner-warn">There is no current, verified calibration for {{ sample.blend }}. Results can't be calculated until one exists. <a href="{% url 'lab:calibration_create' %}?blend={{ sample.blend_id }}">Calibrate {{ sample.blend }}</a></div>
           {% else %}
