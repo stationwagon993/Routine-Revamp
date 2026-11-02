@@ -52,6 +52,8 @@
   <span><span class="swatch" style="background: var(--cancelled)"></span> Testing cancelled</span>
   <span><span class="swatch" style="background: var(--oldest); width: auto; padding: 0 4px; color: #fff">{{ oldest.sample_number|default:"—" }}</span> Oldest in process</span>
   <span><span class="swatch" style="width: auto; padding: 0 4px">{{ TODAY_JULIAN }}</span> Julian date</span>
+  <span class="spacer" style="flex: 1"></span>
+  <button type="button" class="link" id="fit-columns" title="Undo any column resizing">Fit columns to screen</button>
 </div>
 
 <div class="log-wrap">
@@ -60,20 +62,20 @@
     <tr class="groups">
       <th class="sticky" colspan="1"></th>
       <th colspan="8"></th>
-      {% for group, methods in groups %}<th colspan="{{ methods|length }}">{% if group != "General" %}{{ group }}{% endif %}</th>{% endfor %}
+      {% for group, methods in column_groups %}<th colspan="{{ methods|length }}">{% if group != "General" %}{{ group }}{% endif %}</th>{% endfor %}
     </tr>
     <tr class="cols">
-      <th class="sticky">Sample #</th>
-      <th>Sample Identification</th>
-      <th>LTO</th>
-      <th>Refrigerant Type</th>
-      <th>Lubricant</th>
-      <th>Sample Date</th>
-      <th>Submitter</th>
-      <th>Engineer</th>
-      <th>Comments</th>
-      {% for group, methods in groups %}{% for m in methods %}
-      <th class="vertical" title="{{ m.name }}"><div>{{ m.name }}{% if m.code %} <small>({{ m.code }})</small>{% endif %}</div></th>
+      <th class="sticky" data-col="sample">Sample #</th>
+      <th data-col="ident">Sample Identification</th>
+      <th data-col="lto">LTO</th>
+      <th data-col="refrigerant">Refrigerant Type</th>
+      <th data-col="lubricant">Lubricant</th>
+      <th data-col="sampled">Sample Date</th>
+      <th data-col="submitter">Submitter</th>
+      <th data-col="engineer">Engineer</th>
+      <th data-col="comments">Comments</th>
+      {% for group, methods in column_groups %}{% for m in methods %}
+      <th class="vertical" data-col="test-{{ m.pk }}" title="{{ m.name }}"><div>{{ m.name }}{% if m.code %} <small>({{ m.code }})</small>{% endif %}</div></th>
       {% endfor %}{% endfor %}
     </tr>
   </thead>

@@ -438,6 +438,15 @@ class ViewTests(LabTestCase):
         for text in ["R-454B", "CPI 2931 AW", "10/25/2026", "Logan Kiasau", "Tejesh Dube"]:
             self.assertIn(text, page)
 
+    def test_log_columns_put_other_general_tests_after_oil(self):
+        response = self.client.get(reverse("lab:sample_log"))
+        names = [m.name for _, methods in response.context["column_groups"] for m in methods]
+        self.assertEqual(names[0], "Results Reported")
+        self.assertLess(names.index("Wear Metals by ICP-OES"), names.index("Determination of Anions in Water"))
+        self.assertEqual(names[-1], "Unknown (Chemist Input Needed)")
+        # The filter dropdown keeps its order.
+        self.assertEqual([g for g, _ in response.context["groups"]], ["General", "Refrigerant", "Oil"])
+
     def test_report_addressed_to_engineer(self):
         sample = self.make_sample(requested_by_name="Lee, Jordan")
         response = self.client.post(reverse("lab:report_create", args=[sample.pk]))

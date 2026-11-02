@@ -6,6 +6,113 @@ document.querySelectorAll("tr[data-href]").forEach(function (row) {
   });
 });
 
+// Sample log: the grid fills the screen, and each column can be widened or narrowed by
+// dragging the right edge of its header. Widths are remembered in this browser only.
+(function () {
+  var table = document.querySelector("table.log");
+  if (!table) return;
+  var wrap = table.parentElement;
+  var headers = Array.prototype.slice.call(table.querySelectorAll("tr.cols th[data-col]"));
+  if (!headers.length) return;
+  var KEY = "routine-revamp.log-column-widths";
+  var MIN = 24;
+
+  var colgroup = document.createElement("colgroup");
+  var cols = headers.map(function () { return colgroup.appendChild(document.createElement("col")); });
+  table.insertBefore(colgroup, table.firstChild);
+
+  function load() {
+    try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { return null; }
+  }
+  function save(widths) {
+    try { localStorage.setItem(KEY, JSON.stringify(widths)); } catch (e) { /* not remembered */ }
+  }
+  function forget() {
+    try { localStorage.removeItem(KEY); } catch (e) { /* nothing saved */ }
+  }
+
+  function apply(widths) {
+    var total = 0;
+    widths.forEach(function (w, i) { cols[i].style.width = w + "px"; total += w; });
+    table.style.width = total + "px";
+    table.classList.add("sized");
+  }
+
+  // Natural widths (what the browser picks for the content), stretched to fill the screen.
+  function fit() {
+    table.classList.remove("sized");
+    table.style.width = "";
+    cols.forEach(function (col) { col.style.width = ""; });
+    var natural = headers.map(function (th) { return th.getBoundingClientRect().width; });
+    var sum = natural.reduce(function (a, b) { return a + b; }, 0);
+    var available = wrap.clientWidth;
+    var scale = sum < available ? available / sum : 1;
+    var widths = natural.map(function (w) { return Math.floor(w * scale); });
+    widths[widths.length - 1] += Math.max(0, Math.floor(available - widths.reduce(function (a, b) { return a + b; }, 0)));
+    apply(widths);
+    return widths;
+  }
+
+  function current() {
+    return cols.map(function (col) { return parseFloat(col.style.width); });
+  }
+
+  function start() {
+    var saved = load();
+    if (saved) {
+      var widths = fit();
+      headers.forEach(function (th, i) {
+        var w = saved[th.dataset.col];
+        if (w) widths[i] = w;
+      });
+      apply(widths);
+    } else {
+      fit();
+    }
+  }
+
+  headers.forEach(function (th, i) {
+    var handle = document.createElement("div");
+    handle.className = "col-resizer";
+    handle.title = "Drag to resize";
+    th.appendChild(handle);
+    handle.addEventListener("mousedown", function (event) {
+      event.preventDefault();
+      var startX = event.clientX;
+      var widths = current();
+      var startWidth = widths[i];
+      handle.classList.add("dragging");
+      document.body.classList.add("resizing-columns");
+      function move(e) {
+        widths[i] = Math.max(MIN, startWidth + e.clientX - startX);
+        apply(widths);
+      }
+      function up() {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        handle.classList.remove("dragging");
+        document.body.classList.remove("resizing-columns");
+        var byName = {};
+        headers.forEach(function (h, j) { byName[h.dataset.col] = widths[j]; });
+        save(byName);
+      }
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    });
+  });
+
+  var fitButton = document.getElementById("fit-columns");
+  if (fitButton) fitButton.addEventListener("click", function () { forget(); fit(); });
+
+  var timer = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(timer);
+    timer = setTimeout(function () { if (!load()) fit(); }, 150);
+  });
+
+  start();
+})();
+
 // Sample log: close the "Testing needed" menu when clicking elsewhere.
 document.addEventListener("click", function (event) {
   document.querySelectorAll("details.filter-menu[open]").forEach(function (menu) {

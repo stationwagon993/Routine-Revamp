@@ -36,8 +36,8 @@ from .models import (
 )
 
 GROUP_ORDER = [TestMethod.GROUP_GENERAL, TestMethod.GROUP_REFRIGERANT, TestMethod.GROUP_OIL]
-# The intake form lists the sample-specific tests first.
-INTAKE_GROUP_ORDER = [TestMethod.GROUP_REFRIGERANT, TestMethod.GROUP_OIL, TestMethod.GROUP_GENERAL]
+# The intake form and the sample log columns list the sample-specific tests first.
+TESTS_FIRST_ORDER = [TestMethod.GROUP_REFRIGERANT, TestMethod.GROUP_OIL, TestMethod.GROUP_GENERAL]
 EXPIRY_WARNING_DAYS = 14
 
 
@@ -85,6 +85,8 @@ def _open_samples():
 @login_required
 def sample_log(request):
     methods = _ordered_methods(TestMethod.objects.filter(active=True))
+    # Log columns: Results Reported first (as in the Excel log), then refrigerant, oil, other general tests.
+    columns = sorted(_ordered_methods(methods, TESTS_FIRST_ORDER), key=lambda m: not m.on_every_sample)
     samples = Sample.objects.prefetch_related(
         Prefetch("tests", queryset=SampleTest.objects.select_related("completed_by__lab_profile"))
     )
@@ -126,13 +128,14 @@ def sample_log(request):
     rows = []
     for sample in page:
         by_method = {t.test_method_id: t for t in sample.tests.all()}
-        rows.append((sample, [by_method.get(m.pk) for m in methods]))
+        rows.append((sample, [by_method.get(m.pk) for m in columns]))
 
     return render(
         request,
         "lab/sample_log.html",
         {
             "groups": _grouped(methods),
+            "column_groups": _grouped(columns),
             "rows": rows,
             "page": page,
             "oldest": oldest,
@@ -170,7 +173,7 @@ def sample_create(request):
             return redirect("lab:sample_create")
         return redirect(sample)
 
-    methods = _ordered_methods(form.fields["tests"].queryset, INTAKE_GROUP_ORDER)
+    methods = _ordered_methods(form.fields["tests"].queryset, TESTS_FIRST_ORDER)
     selected = {str(v) for v in (form["tests"].value() or [])}
     return render(
         request,

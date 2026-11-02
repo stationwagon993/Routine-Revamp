@@ -157,6 +157,7 @@ table.data input { width: 110px; }
 .filter-footer { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; }
 .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; margin-bottom: 10px; }
 .legend span { display: inline-flex; align-items: center; gap: 4px; }
+.legend button.link { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
 .swatch { display: inline-block; width: 26px; height: 16px; border: 1px solid #999; text-align: center; font-size: 11px; line-height: 14px; }
 
 .log-wrap { overflow: auto; max-height: calc(100vh - 220px); border: 1px solid var(--border); background: #fff; }
@@ -174,6 +175,14 @@ table.log td.cell { width: 30px; text-align: center; font-weight: 600; }
 table.log tbody tr:hover td { background-color: #f1f6fb; }
 table.log tbody tr { cursor: pointer; }
 table.log td.ident { max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+/* Once the columns are sized (app.js), the grid fills the screen and each column can be resized. */
+table.log.sized { table-layout: fixed; }
+table.log.sized th, table.log.sized td { overflow: hidden; text-overflow: ellipsis; }
+table.log.sized td.ident { max-width: none; }
+table.log tr.cols th { position: sticky; }
+.col-resizer { position: absolute; top: 0; right: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 4; }
+.col-resizer:hover, .col-resizer.dragging { background: rgba(31, 95, 153, .35); }
+body.resizing-columns, body.resizing-columns * { cursor: col-resize !important; user-select: none; }
 
 td.st-requested, table.log tbody tr:hover td.st-requested { background: var(--requested); }
 td.st-completed, table.log tbody tr:hover td.st-completed { background: var(--completed); color: #fff; }
