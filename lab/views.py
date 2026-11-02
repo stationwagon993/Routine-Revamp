@@ -109,7 +109,6 @@ def sample_create(request):
     form = SampleIntakeForm(
         request.POST or None,
         initial={
-            "submitter": request.user.get_full_name() or request.user.username,
             "received_on": today,
             "sampled_on": today,
         },

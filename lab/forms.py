@@ -62,9 +62,7 @@ class SampleForm(forms.ModelForm):
             "sample_type",
             "sample_type_other",
             "phase",
-            "reason",
             "comments",
-            "identification",
             "blend",
         ]
         widgets = {
@@ -72,10 +70,10 @@ class SampleForm(forms.ModelForm):
             "sampled_on": forms.DateInput(attrs={"type": "date"}),
             "sample_type": forms.RadioSelect,
             "phase": forms.RadioSelect,
-            "reason": forms.Textarea(attrs={"rows": 2}),
             "comments": forms.Textarea(attrs={"rows": 3}),
         }
         labels = {
+            "submitter": "Submitted by",
             "requested_by_name": "Engineer requesting testing",
             "requested_by_email": "Send report to (email)",
             "lto": "Associated eLTO",
@@ -100,6 +98,7 @@ class SampleForm(forms.ModelForm):
         self.fields["sample_type"].choices = Sample.TYPE_CHOICES
         self.fields["phase"].choices = Sample.PHASE_CHOICES[1:]
         self.fields["submitter"].required = True
+        self.fields["submitter"].help_text = "The tech from the testing facility who brought the sample."
         self.fields["sampled_on"].required = True
         self.fields["blend"].queryset = Blend.objects.filter(active=True)
         self.fields["blend"].required = False
@@ -178,7 +177,6 @@ class SampleForm(forms.ModelForm):
             lubricant = self._pick("lubricant", True, "Choose the lubricant type.")
             self._require("requested_by_name", "Enter the engineer requesting testing.")
             self._require("lto", "Enter the associated eLTO.")
-            self._require("reason", "Enter the reason for testing.")
             self._require("sample_type", "Choose the sample type.")
 
         sample_type = cleaned.get("sample_type")
@@ -200,6 +198,13 @@ class SampleForm(forms.ModelForm):
         sample.refrigerant_type = refrigerant
         sample.lubricant_type = lubricant
         return cleaned
+
+    def save(self, commit=True):
+        sample = super().save(commit=False)
+        sample.identification = sample.build_identification()[:200]
+        if commit:
+            sample.save()
+        return sample
 
 
 class SampleIntakeForm(SampleForm):

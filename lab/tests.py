@@ -258,7 +258,7 @@ class ViewTests(LabTestCase):
             "sampled_on": "2026-07-06",
             "requested_by_name": "Jordan Lee",
             "lto": "108836",
-            "reason": "Routine check",
+            "comments": "Routine check",
             "refrigerant": "R-410A",
             "lubricant": "Solest 120",
         }
@@ -317,6 +317,27 @@ class ViewTests(LabTestCase):
         self.assertIn("plant7_refrigerant", errors)
         self.assertIn("unit_id", errors)
 
+    def test_intake_form_fields(self):
+        form = self.client.get(reverse("lab:sample_create")).context["form"]
+        self.assertEqual(form["submitter"].value(), None)  # typed in, not the logged-in user
+        self.assertNotIn("reason", form.fields)
+        self.assertNotIn("identification", form.fields)
+        offered = set(form.fields["tests"].queryset.values_list("name", flat=True))
+        self.assertNotIn("Miscellaneous", offered)
+        self.assertNotIn("Test Plan Submitted", offered)
+
+    def test_edit_rebuilds_identification(self):
+        tan = TestMethod.objects.get(name="TAN")
+        self.intake(origin="Plant 4", unit_id="U1", sample_type="oil", tests=[tan.pk])
+        sample = Sample.objects.get()
+        self.client.post(reverse("lab:sample_edit", args=[sample.pk]), {
+            "submitter": "Pat Kim", "received_on": "2026-07-07", "sampled_on": "2026-07-06",
+            "requested_by_name": "Jordan Lee", "lto": "108836", "origin": "Plant 4",
+            "unit_id": "U2", "refrigerant": "R-410A", "lubricant": "Solest 120", "sample_type": "oil",
+        })
+        sample.refresh_from_db()
+        self.assertEqual(sample.identification, "Plant 4, U2, Oil")
+
     def test_tests_must_fit_sample_type(self):
         non_cond = TestMethod.objects.get(name="Non-Condensables")
         response = self.intake(origin="Plant 4", unit_id="U1", sample_type="refrigerant", phase="liquid", tests=[non_cond.pk])
@@ -342,7 +363,7 @@ class ViewTests(LabTestCase):
         cal, _, _ = self.make_calibration()
         sample = self.make_sample(lto="108782")
         self.make_sample(lto="108782")
-        for name in ["TAN", "Blend Analysis", "Viscosity", "Test Plan Submitted"]:
+        for name in ["TAN", "Blend Analysis", "Viscosity", "Results Reported"]:
             self.add_test(sample, name)
         report = Report.objects.create(report_number="R1")
         report.samples.add(sample)

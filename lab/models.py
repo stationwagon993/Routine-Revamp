@@ -413,9 +413,11 @@ class Sample(models.Model):
     identification = models.CharField(
         max_length=200,
         blank=True,
-        help_text="Leave blank to build it from the answers, e.g. Compressors, GCS 4, Refrigerant, Liquid.",
+        help_text="Built from the intake answers, e.g. Compressors, GCS 4, Refrigerant, Liquid.",
     )
-    submitter = models.CharField(max_length=100, blank=True)
+    submitter = models.CharField(
+        max_length=100, blank=True, help_text="The tech from the testing facility who brought the sample."
+    )
     origin = models.CharField("where the sample originates", max_length=100, blank=True)
     origin_area = models.CharField(
         "area", max_length=100, blank=True, help_text="Plant 7 location or Lab 11 area."
