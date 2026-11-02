@@ -325,6 +325,11 @@ class FormulaForm(forms.ModelForm):
             "<code>mass_g | Sample mass | g</code>."
         ),
     )
+    both_pressures = forms.BooleanField(
+        label="Use this formula for both pressures",
+        required=False,
+        help_text="Untick to change only this pressure's formula.",
+    )
 
     class Meta:
         model = Formula

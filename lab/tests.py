@@ -215,14 +215,19 @@ class ResultTests(LabTestCase):
         self.assertAlmostEqual(values["R-125"], 42 / 102 * 100)
         self.assertAlmostEqual(sum(values.values()), 100.0)
 
-    def test_hbr_formula_depends_on_refrigerant_pressure(self):
+    def test_every_formula_test_has_both_pressures(self):
+        for method in TestMethod.objects.filter(calc_type=TestMethod.CALC_FORMULA):
+            with self.subTest(method=method.name):
+                high = method.current_formula(Formula.PRESSURE_HIGH)
+                low = method.current_formula(Formula.PRESSURE_LOW)
+                self.assertNotEqual(high, low)
+                self.assertTrue(high.same_calculation(low))  # copied, so results don't change
+
+    def test_formula_depends_on_refrigerant_pressure(self):
         method = TestMethod.objects.get(name="High Boiling Residue")
-        self.assertTrue(method.formula_by_pressure)
         high = method.current_formula(Formula.PRESSURE_HIGH)
-        self.assertIsNotNone(high)  # the existing formula became the high/medium-pressure one
-        self.assertIsNone(method.current_formula(Formula.PRESSURE_LOW))
         low = Formula.objects.create(
-            test_method=method, pressure=Formula.PRESSURE_LOW, version=1,
+            test_method=method, pressure=Formula.PRESSURE_LOW, version=2,
             expression="residue_g / mass_g * 50", inputs=high.inputs, result_unit="%",
         )
         for refrigerant, expected in [("R-1233zd(E)", low), ("R-1336MZZ(Z)", low), ("R-514A", low),
@@ -230,9 +235,6 @@ class ResultTests(LabTestCase):
             with self.subTest(refrigerant=refrigerant):
                 sample = self.make_sample(refrigerant_type=refrigerant)
                 self.assertEqual(method.current_formula(sample.pressure), expected)
-        # Other formula tests ignore pressure.
-        tan = TestMethod.objects.get(name="TAN")
-        self.assertEqual(tan.current_formula(Formula.PRESSURE_LOW), tan.current_formula())
 
     def test_manual_result(self):
         sample = self.make_sample()
@@ -601,14 +603,22 @@ class ViewTests(LabTestCase):
         self.assertEqual(current.version, 2)
         self.assertFalse(current.is_placeholder)
 
-    def test_low_pressure_formula_through_view(self):
+    def test_formula_for_one_or_both_pressures_through_view(self):
         method = TestMethod.objects.get(name="High Boiling Residue")
         url = reverse("lab:formula_new_version", args=[method.pk]) + "?pressure=low"
+        # Both pressures share a formula today, so "both" starts ticked.
+        self.assertTrue(self.client.get(url).context["form"]["both_pressures"].value())
         data = {"inputs_text": "r | Residue | g\nm | Mass | g", "expression": "r / m * 100", "result_unit": "%", "decimals": "3"}
-        self.assertRedirects(self.client.post(url, data), reverse("lab:formula_list"))
+        self.assertRedirects(self.client.post(url, data), reverse("lab:formula_list"))  # unticked
         low = method.current_formula(Formula.PRESSURE_LOW)
-        self.assertEqual((low.version, low.expression), (1, "r / m * 100"))
+        self.assertEqual((low.version, low.expression), (2, "r / m * 100"))
         self.assertEqual(method.current_formula(Formula.PRESSURE_HIGH).version, 1)  # untouched
+        self.assertFalse(self.client.get(url).context["form"]["both_pressures"].value())
+        moisture = TestMethod.objects.get(name="Moisture")
+        both = dict(data, expression="r / m", both_pressures="on")
+        self.client.post(reverse("lab:formula_new_version", args=[moisture.pk]), both)
+        for pressure in (Formula.PRESSURE_HIGH, Formula.PRESSURE_LOW):
+            self.assertEqual(moisture.current_formula(pressure).expression, "r / m")
         sample = self.make_sample(refrigerant_type="R-514A")
         self.add_test(sample, "High Boiling Residue")
         page = self.client.get(sample.get_absolute_url())

@@ -45,8 +45,8 @@
 
         {% if method.calc_type == "formula" %}
           {% if formula %}
-          {% if method.formula_by_pressure %}<p class="muted">{{ formula.get_pressure_display }} formula ({{ sample.refrigerant_type|default:"no refrigerant type" }}).</p>{% endif %}
-          {% if formula.is_placeholder %}<div class="banner-warn">This is a <strong>placeholder formula</strong> that has not been confirmed by the lab. <a href="{% url 'lab:formula_new_version' method.pk %}{% if formula.pressure %}?pressure={{ formula.pressure }}{% endif %}">Enter the real formula</a>.</div>{% endif %}
+          <p class="muted">{{ formula.get_pressure_display }} formula ({{ sample.refrigerant_type|default:"no refrigerant type" }}).</p>
+          {% if formula.is_placeholder %}<div class="banner-warn">This is a <strong>placeholder formula</strong> that has not been confirmed by the lab. <a href="{% url 'lab:formula_new_version' method.pk %}?pressure={{ formula.pressure }}">Enter the real formula</a>.</div>{% endif %}
           <form method="post" action="{% url 'lab:test_results' test.pk %}" data-calc-url="{% url 'lab:test_calculate' test.pk %}">
             {% csrf_token %}
             <input type="hidden" name="formula_id" value="{{ formula.pk }}">
@@ -63,7 +63,7 @@
             <div class="calc-output"></div>
           </form>
           {% else %}
-          <p class="muted">No {% if method.formula_by_pressure %}{% if sample.pressure == "low" %}low-pressure{% else %}high/medium-pressure{% endif %} {% endif %}formula is set up for this test yet. <a href="{% url 'lab:formula_new_version' method.pk %}{% if method.formula_by_pressure %}?pressure={{ sample.pressure }}{% endif %}">Add one</a>.</p>
+          <p class="muted">No {% if sample.pressure == "low" %}low-pressure{% else %}high/medium-pressure{% endif %} formula is set up for this test yet. <a href="{% url 'lab:formula_new_version' method.pk %}?pressure={{ sample.pressure }}">Add one</a>.</p>
           {% endif %}
 
         {% elif method.calc_type == "blend" %}

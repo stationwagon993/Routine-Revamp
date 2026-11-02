@@ -35,7 +35,7 @@ admin.site.register(User, UserAdmin)
 
 @admin.register(TestMethod)
 class TestMethodAdmin(admin.ModelAdmin):
-    list_display = ["name", "code", "group", "calc_type", "applies_to", "display_order", "on_every_sample", "formula_by_pressure", "active"]
+    list_display = ["name", "code", "group", "calc_type", "applies_to", "display_order", "on_every_sample", "active"]
     list_editable = ["code", "applies_to", "display_order", "active"]
     list_filter = ["group", "calc_type", "active"]
 

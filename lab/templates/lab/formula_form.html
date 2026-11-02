@@ -1,7 +1,7 @@
 {% extends "lab/base.html" %}
 {% block title %}{{ method.name }} formula{% endblock %}
 {% block content %}
-<h1>{{ method.name }} formula{% if pressure_label %} for {{ pressure_label|lower }}{% endif %}{% if current %} – new version (current is v{{ current.version }}){% endif %}</h1>
+<h1>{{ method.name }} formula for {{ pressure_label|lower }}{% if current %} – new version (current is v{{ current.version }}){% endif %}</h1>
 <form method="post" class="panel">
   {% csrf_token %}
   {{ form.non_field_errors }}
@@ -12,6 +12,10 @@
     {% include "lab/_field.html" with field=form.decimals %}
   </div>
   {% include "lab/_field.html" with field=form.notes %}
+  <div class="field check" style="margin-top: 8px;">
+    <label>{{ form.both_pressures }} Also save it as the formula for {{ other_label|lower }}</label>
+    <div class="help">Leave ticked when the calculation is the same for both (e.g. Moisture). Untick to change only the {{ pressure_label|lower }} formula.</div>
+  </div>
   <div class="actions">
     <button type="submit">Save new version</button>
     <a href="{% url 'lab:formula_list' %}">Cancel</a>

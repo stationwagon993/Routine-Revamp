@@ -550,12 +550,12 @@ def formula_list(request):
 @login_required
 def formula_new_version(request, method_pk):
     method = get_object_or_404(TestMethod, pk=method_pk, calc_type=TestMethod.CALC_FORMULA)
-    pressure = request.GET.get("pressure", "") if method.formula_by_pressure else ""
+    pressure = request.GET.get("pressure") or Formula.PRESSURE_HIGH
     if pressure not in dict(Formula.PRESSURE_CHOICES):
         raise Http404("Unknown pressure.")
-    if method.formula_by_pressure and not pressure:
-        pressure = Formula.PRESSURE_HIGH
+    other = Formula.PRESSURE_LOW if pressure == Formula.PRESSURE_HIGH else Formula.PRESSURE_HIGH
     current = method.current_formula(pressure)
+    other_current = method.current_formula(other)
     # Always a new, unsaved version, pre-filled from the current one.
     draft = Formula(test_method=method, pressure=pressure)
     if current:
@@ -563,18 +563,34 @@ def formula_new_version(request, method_pk):
         draft.inputs = current.inputs
         draft.result_unit = current.result_unit
         draft.decimals = current.decimals
-    form = FormulaForm(request.POST or None, instance=draft)
+    # Offer to save for both pressures; ticked when they share a formula today.
+    if current is None:
+        both = other_current is None
+    else:
+        both = current.same_calculation(other_current)
+    form = FormulaForm(request.POST or None, instance=draft, initial={"both_pressures": both})
     if request.method == "POST" and form.is_valid():
         formula = form.save(commit=False)
-        formula.version = (
-            method.formulas.filter(pressure=pressure).aggregate(v=Max("version"))["v"] or 0
-        ) + 1
-        formula.created_by = request.user
-        formula.save()
-        messages.success(request, f"{formula} saved.")
+        pressures = [pressure, other] if form.cleaned_data["both_pressures"] else [pressure]
+        saved = []
+        with transaction.atomic():
+            for p in pressures:
+                formula.pk = None
+                formula.pressure = p
+                formula.version = (method.formulas.filter(pressure=p).aggregate(v=Max("version"))["v"] or 0) + 1
+                formula.created_by = request.user
+                formula.save()
+                saved.append(str(formula))
+        messages.success(request, " and ".join(saved) + " saved.")
         return redirect("lab:formula_list")
     return render(
         request,
         "lab/formula_form.html",
-        {"form": form, "method": method, "current": current, "pressure_label": draft.get_pressure_display() if pressure else ""},
+        {
+            "form": form,
+            "method": method,
+            "current": current,
+            "pressure_label": draft.get_pressure_display(),
+            "other_label": dict(Formula.PRESSURE_CHOICES)[other],
+        },
     )

@@ -91,11 +91,6 @@ class TestMethod(models.Model):
             "Blank = offered for every sample."
         ),
     )
-    formula_by_pressure = models.BooleanField(
-        "separate formulas by refrigerant pressure",
-        default=False,
-        help_text="One formula for low-pressure refrigerants and one for high/medium-pressure (e.g. HBR).",
-    )
 
     class Meta:
         ordering = ["display_order", "name"]
@@ -113,17 +108,13 @@ class TestMethod(models.Model):
     def has_results(self):
         return self.calc_type != self.CALC_TRACKING
 
-    def current_formula(self, pressure=""):
-        """The latest formula; for tests split by pressure, the one for that pressure."""
-        if not self.formula_by_pressure:
-            pressure = ""
+    def current_formula(self, pressure="high"):
+        """The latest formula for samples of that refrigerant pressure (see Sample.pressure)."""
         return self.formulas.filter(active=True, pressure=pressure).order_by("-version").first()
 
     def pressure_formulas(self):
         """[(pressure, label, current formula)] for the Formulas page."""
-        if not self.formula_by_pressure:
-            return [("", "", self.current_formula())]
-        return [(p, label, self.current_formula(p)) for p, label in Formula.PRESSURE_CHOICES[1:]]
+        return [(p, label, self.current_formula(p)) for p, label in Formula.PRESSURE_CHOICES]
 
 
 class Formula(models.Model):
@@ -135,14 +126,14 @@ class Formula(models.Model):
 
     PRESSURE_LOW = "low"
     PRESSURE_HIGH = "high"
+    # Every calculated test has a formula for each; they may well be the same.
     PRESSURE_CHOICES = [
-        ("", "All samples"),
-        (PRESSURE_LOW, "Low-pressure refrigerants"),
         (PRESSURE_HIGH, "High/medium-pressure refrigerants"),
+        (PRESSURE_LOW, "Low-pressure refrigerants"),
     ]
 
     test_method = models.ForeignKey(TestMethod, on_delete=models.PROTECT, related_name="formulas")
-    pressure = models.CharField(max_length=10, choices=PRESSURE_CHOICES, blank=True, default="")
+    pressure = models.CharField(max_length=10, choices=PRESSURE_CHOICES, default=PRESSURE_HIGH)
     version = models.PositiveIntegerField()
     expression = models.TextField()
     # [{"name": "mass_g", "label": "Sample mass", "unit": "g"}, ...]
@@ -168,9 +159,12 @@ class Formula(models.Model):
         ]
 
     def __str__(self):
-        if self.pressure:
-            return f"{self.test_method.name} ({self.get_pressure_display()}) v{self.version}"
-        return f"{self.test_method.name} v{self.version}"
+        return f"{self.test_method.name} ({self.get_pressure_display()}) v{self.version}"
+
+    def same_calculation(self, other):
+        return other is not None and (self.expression, self.inputs, self.result_unit, self.decimals) == (
+            other.expression, other.inputs, other.result_unit, other.decimals
+        )
 
     @property
     def input_names(self):
