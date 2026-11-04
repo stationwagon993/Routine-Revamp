@@ -218,6 +218,21 @@ class Formula(models.Model):
 # --- Blends, calibrations, verifications ------------------------------------
 
 
+class Instrument(models.Model):
+    """A GC. Each one has its own calibrations; the standard log is shared between them."""
+
+    name = models.CharField(max_length=50, unique=True, help_text="e.g. GC7890")
+    description = models.CharField(max_length=200, blank=True)
+    active = models.BooleanField(default=True, help_text="Retired instruments are hidden but keep their history.")
+    order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["order", "name"]
+
+    def __str__(self):
+        return self.name
+
+
 class Blend(models.Model):
     RULE_POINTS = "points"
     RULE_PERCENT = "percent"
@@ -264,12 +279,17 @@ class Blend(models.Model):
                 return blend
         return None
 
-    def active_calibration(self, on=None):
-        """Latest unexpired calibration whose latest verification passed and is still current."""
+    def active_calibration(self, on=None, instrument=None):
+        """
+        Latest unexpired calibration whose latest verification passed and is still current,
+        on the given instrument (or on any active instrument).
+        """
         on = on or timezone.localdate()
-        candidates = self.calibrations.filter(performed_on__lte=on, expires_on__gte=on).order_by(
-            "-performed_on", "-id"
-        )
+        candidates = self.calibrations.filter(
+            performed_on__lte=on, expires_on__gte=on, instrument__active=True
+        ).order_by("-performed_on", "-id")
+        if instrument is not None:
+            candidates = candidates.filter(instrument=instrument)
         for calibration in candidates:
             if calibration.is_usable(on):
                 return calibration
@@ -408,6 +428,7 @@ class Calibration(models.Model):
         STATUS_EXPIRED: "Expired",
     }
 
+    instrument = models.ForeignKey(Instrument, on_delete=models.PROTECT, related_name="calibrations")
     blend = models.ForeignKey(Blend, on_delete=models.PROTECT, related_name="calibrations")
     standard = models.ForeignKey(
         StandardCylinder, null=True, blank=True, on_delete=models.PROTECT, related_name="calibrations"
@@ -427,7 +448,7 @@ class Calibration(models.Model):
         ordering = ["-performed_on", "-id"]
 
     def __str__(self):
-        return f"{self.blend} calibration {self.performed_on:%Y-%m-%d}"
+        return f"{self.blend} calibration on {self.instrument} {self.performed_on:%Y-%m-%d}"
 
     def save(self, *args, **kwargs):
         self.expires_on = add_months(self.performed_on, settings.CALIBRATION_VALID_MONTHS)
@@ -665,6 +686,7 @@ class NCCalibration(models.Model):
     nitrogen-in-helium standard give the peak area for 1.00% N2.
     """
 
+    instrument = models.ForeignKey(Instrument, on_delete=models.PROTECT, related_name="nc_calibrations")
     performed_on = models.DateField(default=timezone.localdate)
     performed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
     standard_name = models.CharField("standard used", max_length=100, default="Nitrogen in Helium")
@@ -680,7 +702,7 @@ class NCCalibration(models.Model):
         ordering = ["-performed_on", "-id"]
 
     def __str__(self):
-        return f"Non-condensables calibration {self.performed_on:%Y-%m-%d}"
+        return f"Non-condensables calibration on {self.instrument} {self.performed_on:%Y-%m-%d}"
 
     def save(self, *args, **kwargs):
         self.expires_on = add_months(self.performed_on, settings.CALIBRATION_VALID_MONTHS)
@@ -741,9 +763,13 @@ class NCCalibration(models.Model):
         return Calibration.STATUS_LABELS[self.status]
 
     @classmethod
-    def active(cls, on=None):
+    def active(cls, on=None, instrument=None):
+        """The usable calibration on the given instrument (or on any active instrument)."""
         on = on or timezone.localdate()
-        for calibration in cls.objects.filter(performed_on__lte=on, expires_on__gte=on):
+        candidates = cls.objects.filter(performed_on__lte=on, expires_on__gte=on, instrument__active=True)
+        if instrument is not None:
+            candidates = candidates.filter(instrument=instrument)
+        for calibration in candidates:
             if calibration.is_usable(on):
                 return calibration
         return None

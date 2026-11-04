@@ -2,8 +2,8 @@
 {% load lab_extras %}
 {% block title %}{{ calibration }}{% endblock %}
 {% block content %}
-<div class="actions" style="margin-bottom: 8px;"><a href="{% url 'lab:calibration_list' %}">← Calibrations</a></div>
-<h1>Non-condensables calibration – {{ calibration.performed_on|date:"m/d/Y" }} <span class="pill {{ calibration.status }}">{{ calibration.status_label }}</span></h1>
+<div class="actions" style="margin-bottom: 8px;"><a href="{% url 'lab:calibration_list' %}?gc={{ calibration.instrument_id }}">← {{ calibration.instrument }} calibrations</a></div>
+<h1>Non-condensables calibration on {{ calibration.instrument }} – {{ calibration.performed_on|date:"m/d/Y" }} <span class="pill {{ calibration.status }}">{{ calibration.status_label }}</span></h1>
 {% if calibration.status == "unverified" or calibration.status == "failed" or calibration.status == "reverify" %}<div class="banner-warn">Non-condensables results can't be entered until a verification passes. <a href="{% url 'lab:nc_verification_create' calibration.pk %}">Run verification</a></div>{% endif %}
 
 <div class="panel">

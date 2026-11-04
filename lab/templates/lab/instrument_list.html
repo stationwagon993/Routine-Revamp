@@ -1,0 +1,41 @@
+{% extends "lab/base.html" %}
+{% block title %}Instruments{% endblock %}
+{% block content %}
+<div class="actions" style="margin-bottom: 8px;"><a href="{% url 'lab:calibration_list' %}">← Calibrations</a></div>
+<h1>Instruments</h1>
+<p class="muted">Each GC has its own calibrations and verifications; the standard log is shared. Untick <strong>Active</strong> to retire an instrument: it disappears from the Calibrations page and sample pages but keeps its history. An instrument with no calibrations can be removed.</p>
+
+<div class="panel">
+  <table class="data">
+    <tr><th>Name</th><th>Description</th><th>Order</th><th>Active</th><th>Calibrations</th><th></th></tr>
+    {% for instrument, form in rows %}
+    <tr>
+      <form method="post" action="{% url 'lab:instrument_edit' instrument.pk %}" id="instrument-{{ instrument.pk }}">{% csrf_token %}</form>
+      <td>{{ form.name.as_widget|safe }}</td>
+      <td>{{ form.description.as_widget|safe }}</td>
+      <td style="width: 80px;">{{ form.order.as_widget|safe }}</td>
+      <td>{{ form.active.as_widget|safe }}</td>
+      <td class="num">{{ instrument.calibration_count }}</td>
+      <td class="nowrap">
+        <button type="submit" class="small" form="instrument-{{ instrument.pk }}" name="action" value="save">Save</button>
+        {% if not instrument.calibration_count %}<button type="submit" class="small secondary" form="instrument-{{ instrument.pk }}" name="action" value="delete" onclick="return confirm('Remove {{ instrument.name|escapejs }}?')">Remove</button>{% endif %}
+      </td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="6" class="muted">No instruments yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="panel">
+  <h2>Add an instrument</h2>
+  <form method="post" class="form-grid">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="add">
+    {% include "lab/_field.html" with field=add_form.name %}
+    {% include "lab/_field.html" with field=add_form.description %}
+    {% include "lab/_field.html" with field=add_form.order %}
+    <div class="field"><label>&nbsp;</label><button type="submit">Add instrument</button></div>
+  </form>
+</div>
+{% endblock %}

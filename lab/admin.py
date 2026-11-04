@@ -9,6 +9,7 @@ from .models import (
     CalibrationComponent,
     ChoiceOption,
     Formula,
+    Instrument,
     NCCalibration,
     NCVerification,
     Profile,
@@ -83,6 +84,12 @@ class BlendAdmin(admin.ModelAdmin):
 class StandardComponentInline(admin.TabularInline):
     model = StandardComponent
     extra = 0
+
+
+@admin.register(Instrument)
+class InstrumentAdmin(admin.ModelAdmin):
+    list_display = ["name", "description", "order", "active"]
+    list_editable = ["order", "active"]
 
 
 @admin.register(StandardCylinder)

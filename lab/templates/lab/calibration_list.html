@@ -5,13 +5,23 @@
 <div class="actions" style="justify-content: space-between;">
   <h1>Calibrations</h1>
   <div class="actions">
+    {% if user.is_staff %}<a class="btn secondary" href="{% url 'lab:instrument_list' %}">Manage instruments</a>{% endif %}
     <a class="btn secondary" href="{% url 'lab:standard_list' %}">Standard log</a>
-    <a class="btn" href="{% url 'lab:calibration_create' %}">+ New calibration</a>
+    {% if instrument %}<a class="btn" href="{% url 'lab:calibration_create' %}?gc={{ instrument.pk }}">+ New calibration</a>{% endif %}
   </div>
 </div>
 
-<div class="panel">
-  <h2>Status</h2>
+{% if instruments %}
+<nav class="tabs" aria-label="Instruments">
+  {% for i in instruments %}<a href="?gc={{ i.pk }}" class="{% if i.pk == instrument.pk %}current{% endif %}">{{ i }}</a>{% endfor %}
+</nav>
+{% else %}
+<div class="banner-warn">No instruments are set up.{% if user.is_staff %} <a href="{% url 'lab:instrument_list' %}">Add one</a>.{% else %} Ask an administrator to add one.{% endif %}</div>
+{% endif %}
+
+{% if instrument %}
+<div class="panel tab-panel">
+  <h2>{{ instrument }}{% if instrument.description %} <span class="muted" style="font-weight: 400; font-size: 14px;">{{ instrument.description }}</span>{% endif %}</h2>
   <p class="muted">Calibrations are good for {{ CALIBRATION_VALID_MONTHS }} months. A calibration can only be used while its latest verification has passed and hasn't expired.</p>
   <table class="data">
     <tr><th>Blend</th><th>Calibrated</th><th>Calibration expires</th><th>Verified</th><th>Verification expires</th><th>Pass rule</th><th>Status</th><th></th></tr>
@@ -24,13 +34,13 @@
       <td>{% if ver %}{{ ver.performed_on|date:"m/d/Y" }}{% else %}—{% endif %}</td>
       <td>{% if ver %}{{ ver.expires_on|date:"m/d/Y" }}{% else %}—{% endif %} <span class="muted">({{ blend.verification_valid_days }} day{{ blend.verification_valid_days|pluralize }})</span></td>
       {% else %}
-      <td colspan="4" class="muted">No current calibration</td>
+      <td colspan="4" class="muted">Not calibrated on {{ instrument }}</td>
       {% endif %}
       <td>{{ blend.limit_display|default:"—" }}</td>
       <td>{% if cal %}<span class="pill {{ cal.status }}">{{ cal.status_label }}</span>{% endif %}</td>
       <td class="nowrap">
         {% if cal and not cal.is_expired %}<a href="{% url 'lab:verification_create' cal.pk %}">Verify</a> · {% endif %}
-        <a href="{% url 'lab:calibration_create' %}?blend={{ blend.pk }}">Calibrate</a>
+        <a href="{% url 'lab:calibration_create' %}?gc={{ instrument.pk }}&blend={{ blend.pk }}">Calibrate</a>
       </td>
     </tr>
     {% empty %}
@@ -46,41 +56,20 @@
       <td>{% if nc_verification %}{{ nc_verification.max_error_percent|floatformat:"-3" }}% error{% else %}—{% endif %}</td>
       <td><span class="pill {{ nc.status }}">{{ nc.status_label }}</span></td>
       {% else %}
-      <td colspan="6" class="muted">No current calibration</td>
+      <td colspan="6" class="muted">Not calibrated on {{ instrument }}</td>
       {% endif %}
       <td class="nowrap">
         {% if nc %}<a href="{% url 'lab:nc_verification_create' nc.pk %}">Verify</a> · {% endif %}
-        <a href="{% url 'lab:nc_calibration_create' %}">Calibrate</a>
+        <a href="{% url 'lab:nc_calibration_create' %}?gc={{ instrument.pk }}">Calibrate</a>
       </td>
     </tr>
   </table>
-</div>
 
-<div class="panel">
-  <div class="actions" style="justify-content: space-between;">
-    <h2>Standards on hand</h2>
-    <a class="btn small" href="{% url 'lab:standard_create' %}">+ Add standard</a>
-  </div>
-  <table class="data">
-    <tr><th>Std. code</th><th>Blend</th><th>Prepared</th><th>Usable until</th><th>Remaining</th></tr>
-    {% for s in standards %}
-    <tr>
-      <td><a href="{{ s.get_absolute_url }}">{{ s.code }}</a></td>
-      <td>{{ s.blend }}</td>
-      <td>{{ s.prepared_on|date:"m/d/Y" }}</td>
-      <td>{{ s.expires_on|date:"m/d/Y" }}{% if not s.is_usable %} <span class="pill expired">Past 7 days</span>{% endif %}</td>
-      <td>{% if s.remaining_fraction is not None %}{{ s.remaining_fraction|percent }}{% if s.needs_replacing %} <span class="pill failed">Replace</span>{% endif %}{% else %}—{% endif %}</td>
-    </tr>
-    {% empty %}
-    <tr><td colspan="5" class="muted">No standards on hand. <a href="{% url 'lab:standard_create' %}">Add one</a>.</td></tr>
-    {% endfor %}
-  </table>
-</div>
-
-<div class="panel">
+  <h2 style="margin-top: 18px;">{{ instrument }} calibration history</h2>
   <form method="get" class="actions" style="margin-bottom: 10px;">
-    <a href="?" class="btn small {% if archive %}secondary{% endif %}">Current</a>
-    <a href="?view=archive" class="btn small {% if not archive %}secondary{% endif %}">Archive (expired)</a>
+    <input type="hidden" name="gc" value="{{ instrument.pk }}">
+    <a href="?gc={{ instrument.pk }}" class="btn small {% if archive %}secondary{% endif %}">Current</a>
+    <a href="?gc={{ instrument.pk }}&view=archive" class="btn small {% if not archive %}secondary{% endif %}">Archive (expired)</a>
     {% if archive %}<input type="hidden" name="view" value="archive">{% endif %}
     <select name="blend" onchange="this.form.submit()" aria-label="Blend">
       <option value="">All blends</option>
@@ -99,7 +88,29 @@
       <td><span class="pill {{ cal.status }}">{{ cal.status_label }}</span></td>
     </tr>
     {% empty %}
-    <tr><td colspan="6" class="muted">{% if archive %}No expired calibrations.{% else %}No current calibrations.{% endif %}</td></tr>
+    <tr><td colspan="6" class="muted">{% if archive %}No expired calibrations on {{ instrument }}.{% else %}No current calibrations on {{ instrument }}.{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<div class="panel">
+  <div class="actions" style="justify-content: space-between;">
+    <h2>Standards on hand <span class="muted" style="font-weight: 400; font-size: 13px;">(shared by all instruments)</span></h2>
+    <a class="btn small" href="{% url 'lab:standard_create' %}">+ Add standard</a>
+  </div>
+  <table class="data">
+    <tr><th>Std. code</th><th>Blend</th><th>Prepared</th><th>Usable until</th><th>Remaining</th></tr>
+    {% for s in standards %}
+    <tr>
+      <td><a href="{{ s.get_absolute_url }}">{{ s.code }}</a></td>
+      <td>{{ s.blend }}</td>
+      <td>{{ s.prepared_on|date:"m/d/Y" }}</td>
+      <td>{{ s.expires_on|date:"m/d/Y" }}{% if not s.is_usable %} <span class="pill expired">Past {{ STANDARD_VALID_DAYS }} days</span>{% endif %}</td>
+      <td>{% if s.remaining_fraction is not None %}{{ s.remaining_fraction|percent }}{% if s.needs_replacing %} <span class="pill failed">Replace</span>{% endif %}{% else %}—{% endif %}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="5" class="muted">No standards on hand. <a href="{% url 'lab:standard_create' %}">Add one</a>.</td></tr>
     {% endfor %}
   </table>
 </div>

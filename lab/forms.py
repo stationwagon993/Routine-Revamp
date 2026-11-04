@@ -11,6 +11,7 @@ from .models import (
     Calibration,
     ChoiceOption,
     Formula,
+    Instrument,
     NCCalibration,
     NCVerification,
     Report,
@@ -228,6 +229,19 @@ def _kind(cleaned):
     if cleaned.get("sample_type") == Sample.TYPE_REFRIGERANT:
         return cleaned.get("phase") or ""
     return cleaned.get("sample_type") or ""
+
+
+class InstrumentForm(forms.ModelForm):
+    class Meta:
+        model = Instrument
+        fields = ["name", "description", "order", "active"]
+
+    def __init__(self, *args, form_id=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if form_id:
+            # The fields sit in table cells, outside the <form>; this ties them to it.
+            for field in self.fields.values():
+                field.widget.attrs["form"] = form_id
 
 
 class StandardCylinderForm(forms.ModelForm):

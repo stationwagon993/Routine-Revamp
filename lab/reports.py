@@ -68,7 +68,7 @@ def _sample_block(sample):
     footnotes = []
     tests = sample.tests.filter(
         status=SampleTest.STATUS_COMPLETED, results__isnull=False
-    ).distinct().select_related("test_method", "completed_by", "calibration", "nc_calibration")
+    ).distinct().select_related("test_method", "completed_by", "calibration__instrument", "nc_calibration__instrument")
     for test in tests:
         analyst = user_initials(test.completed_by)
         results = list(test.results.all())
@@ -88,13 +88,13 @@ def _sample_block(sample):
         if test.calibration:
             cal = test.calibration
             footnotes.append(
-                f"{test.test_method.name}: calibration of {cal.blend} on "
+                f"{test.test_method.name}: {cal.instrument}, calibration of {cal.blend} on "
                 f"{cal.performed_on:%m/%d/%Y} (standard {cal.standard_cylinder})."
             )
         if test.nc_calibration:
             cal = test.nc_calibration
             footnotes.append(
-                f"{test.test_method.name}: non-condensables calibration on {cal.performed_on:%m/%d/%Y} "
+                f"{test.test_method.name}: {cal.instrument}, non-condensables calibration on {cal.performed_on:%m/%d/%Y} "
                 f"({cal.standard_name}, {cal.n2_percent:g}% N2)."
             )
     if len(rows) == 1:

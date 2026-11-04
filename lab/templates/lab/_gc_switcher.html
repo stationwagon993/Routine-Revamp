@@ -1,0 +1,10 @@
+<form method="get" class="gc-switcher" action="#test-{{ test.pk }}">
+  <label for="{{ param }}-{{ test.pk }}">Instrument</label>
+  <select name="{{ param }}" id="{{ param }}-{{ test.pk }}" onchange="this.form.submit()">
+    {% for instrument, cal in choices %}
+    <option value="{{ instrument.pk }}" {% if cal and cal.pk == current.pk %}selected{% endif %} {% if not cal %}disabled{% endif %}>{{ instrument }}{% if cal %} – calibrated {{ cal.performed_on|date:"m/d/Y" }}{% else %} – no current, verified calibration{% endif %}</option>
+    {% endfor %}
+  </select>
+  {% if other_value %}<input type="hidden" name="{{ other_param }}" value="{{ other_value }}">{% endif %}
+  <noscript><button type="submit" class="small secondary">Switch</button></noscript>
+</form>

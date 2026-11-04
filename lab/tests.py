@@ -9,6 +9,7 @@ from django.urls import reverse
 from . import formulas, outlook, reports, services
 from .models import (
     Blend,
+    Instrument,
     NCCalibration,
     NCVerification,
     StandardComponent,
@@ -75,6 +76,7 @@ class LabTestCase(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("cs", password="pw", first_name="Carson", last_name="Smith")
         self.blend = Blend.objects.get(name="R-410A")
+        self.gc = Instrument.objects.get(name="GC7890")
         self.r32, self.r125 = self.blend.components.order_by("order")
 
     def make_sample(self, **kwargs):
@@ -91,6 +93,7 @@ class LabTestCase(TestCase):
     def make_calibration(self, on=None, verify_area_r32=10.0, verify=True):
         """Calibration with response factor 5.0 %/area for both components."""
         cal = Calibration.objects.create(
+            instrument=self.gc,
             blend=self.blend,
             standard_cylinder="STD-001",
             performed_by=self.user,
@@ -248,7 +251,7 @@ class ResultTests(LabTestCase):
     def test_blend_requires_verified_calibration(self):
         sample = self.make_sample()
         test = self.add_test(sample, "Blend Analysis")
-        with self.assertRaisesMessage(services.ResultError, "no current, verified calibration"):
+        with self.assertRaisesMessage(services.ResultError, "no current, verified R-410A calibration on any instrument"):
             services.save_results(test, self.user, {})
 
     def test_blend_results_use_response_factors(self):
@@ -589,9 +592,9 @@ class ViewTests(LabTestCase):
             reverse("lab:report_list"),
             report.get_absolute_url(),
             reverse("lab:calibration_list"),
-            reverse("lab:calibration_list") + "?view=archive",
+            reverse("lab:calibration_list") + f"?gc={self.gc.pk}&view=archive",
             reverse("lab:calibration_create"),
-            reverse("lab:calibration_create") + f"?blend={self.blend.pk}",
+            reverse("lab:calibration_create") + f"?gc={self.gc.pk}&blend={self.blend.pk}",
             cal.get_absolute_url(),
             reverse("lab:verification_create", args=[cal.pk]),
             reverse("lab:formula_list"),
@@ -600,6 +603,7 @@ class ViewTests(LabTestCase):
             reverse("lab:standard_create"),
             reverse("lab:standard_create") + f"?blend={self.blend.pk}",
             reverse("lab:nc_calibration_create"),
+            reverse("lab:nc_calibration_create") + f"?gc={self.gc.pk}",
         ]
         for url in urls:
             with self.subTest(url=url):
@@ -638,7 +642,7 @@ class ViewTests(LabTestCase):
             f"run1_{self.r32.pk}": "10", f"run2_{self.r32.pk}": "10", f"run3_{self.r32.pk}": "10",
             f"run1_{self.r125.pk}": "20", f"run2_{self.r125.pk}": "20", f"run3_{self.r125.pk}": "20",
         }
-        url = reverse("lab:calibration_create") + f"?blend={self.blend.pk}"
+        url = reverse("lab:calibration_create") + f"?gc={self.gc.pk}&blend={self.blend.pk}"
         response = self.client.post(url, {"standard": old_std.pk, "performed_on": today, **runs})
         self.assertIn("standard", response.context["form"].errors)  # past its 7 days
         response = self.client.post(url, {"standard": cal_std.pk, "performed_on": today, **runs})
@@ -765,7 +769,7 @@ class NonCondensablesTests(LabTestCase):
         today = datetime.date.today().isoformat()
         areas = [311.5, 312.9, 321.3, 322.8, 322.2, 322.2, 320.5, 313.5, 314.3, 323.8]  # the workbook's NC sheet
         response = self.client.post(
-            reverse("lab:nc_calibration_create"),
+            reverse("lab:nc_calibration_create") + f"?gc={self.gc.pk}",
             {"performed_on": today, "standard_name": "Nitrogen in Helium", "n2_percent": "1.48",
              **{f"area_{i}": a for i, a in enumerate(areas, start=1)}},
         )
@@ -792,3 +796,73 @@ class NonCondensablesTests(LabTestCase):
         self.assertEqual(test.nc_calibration, cal)
         self.assertAlmostEqual(test.results.get().value, 1.4502606, places=6)  # workbook: 0.0145026 (fraction)
         self.assertContains(self.client.get(sample.get_absolute_url()), "NC calibration")
+
+
+class InstrumentTests(LabTestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.user)
+        self.gc2 = Instrument.objects.create(name="GC2", order=1)
+
+    def calibrate(self, instrument, r32_area=10.0):
+        cal, cc32, cc125 = self.make_calibration(verify_area_r32=r32_area)
+        cal.instrument = instrument
+        cal.save()
+        return cal, cc32, cc125
+
+    def test_calibrations_are_per_instrument(self):
+        cal1, _, _ = self.calibrate(self.gc)
+        self.assertEqual(self.blend.active_calibration(instrument=self.gc), cal1)
+        self.assertIsNone(self.blend.active_calibration(instrument=self.gc2))
+        cal2, _, _ = self.calibrate(self.gc2)
+        self.assertEqual(self.blend.active_calibration(instrument=self.gc2), cal2)
+        page = self.client.get(reverse("lab:calibration_list") + f"?gc={self.gc2.pk}")
+        self.assertEqual(page.context["instrument"], self.gc2)
+        self.assertEqual(list(page.context["calibrations"]), [cal2])
+        self.assertEqual([i.name for i in page.context["instruments"]], ["GC7890", "GC2"])
+        # Retired instruments drop out of the tabs and their calibrations can't be used.
+        self.gc2.active = False
+        self.gc2.save()
+        self.assertIsNone(self.blend.active_calibration(instrument=self.gc2))
+        self.assertNotIn(self.gc2, self.client.get(reverse("lab:calibration_list")).context["instruments"])
+
+    def test_sample_picks_the_instrument(self):
+        cal1, cc32_1, cc125_1 = self.calibrate(self.gc)
+        cal2, cc32_2, cc125_2 = self.calibrate(self.gc2)
+        sample = self.make_sample()
+        test = self.add_test(sample, "Blend Analysis")
+        page = self.client.get(sample.get_absolute_url())
+        self.assertEqual(page.context["calibration"], cal1)  # first usable one
+        page = self.client.get(sample.get_absolute_url() + f"?gc={self.gc2.pk}")
+        self.assertEqual(page.context["calibration"], cal2)
+        self.assertContains(page, "GC2 – calibrated")
+        services.save_results(test, self.user, {"calibration_id": cal2.pk, f"area_{cc32_2.pk}": "10", f"area_{cc125_2.pk}": "10"})
+        test.refresh_from_db()
+        self.assertEqual(test.calibration, cal2)
+        # A calibration that's no longer usable is refused.
+        cal2.verifications.all().delete()
+        with self.assertRaisesMessage(services.ResultError, "GC2 calibration can't be used"):
+            services.compute_results(test, {"calibration_id": cal2.pk, f"area_{cc32_2.pk}": "10", f"area_{cc125_2.pk}": "10"})
+
+    def test_only_admins_manage_instruments(self):
+        url = reverse("lab:instrument_list")
+        self.assertEqual(self.client.get(url).status_code, 403)
+        self.assertNotContains(self.client.get(reverse("lab:calibration_list")), "Manage instruments")
+        self.user.is_staff = True
+        self.user.save()
+        self.assertContains(self.client.get(reverse("lab:calibration_list")), "Manage instruments")
+        self.client.post(url, {"action": "add", "new-name": "GC8890", "new-description": "Bay 2", "new-order": "2"})
+        gc3 = Instrument.objects.get(name="GC8890")
+        self.client.post(
+            reverse("lab:instrument_edit", args=[gc3.pk]),
+            {"action": "save", f"i{gc3.pk}-name": "GC8890A", f"i{gc3.pk}-description": "", f"i{gc3.pk}-order": "2"},
+        )
+        gc3.refresh_from_db()
+        self.assertEqual(gc3.name, "GC8890A")
+        self.assertFalse(gc3.active)  # Active left unticked: retired
+        self.client.post(reverse("lab:instrument_edit", args=[gc3.pk]), {"action": "delete"})
+        self.assertFalse(Instrument.objects.filter(pk=gc3.pk).exists())
+        # An instrument with calibrations can only be retired.
+        self.calibrate(self.gc)
+        self.client.post(reverse("lab:instrument_edit", args=[self.gc.pk]), {"action": "delete"})
+        self.assertTrue(Instrument.objects.filter(pk=self.gc.pk).exists())

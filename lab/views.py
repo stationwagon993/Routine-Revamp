@@ -7,7 +7,8 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Max, Prefetch, Q
+from django.core.exceptions import PermissionDenied
+from django.db.models import Count, Max, Prefetch, Q
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -19,6 +20,7 @@ from . import outlook, reports, services
 from .forms import (
     CalibrationForm,
     FormulaForm,
+    InstrumentForm,
     NCCalibrationForm,
     NCVerificationForm,
     ReportForm,
@@ -33,6 +35,7 @@ from .models import (
     CalibrationComponent,
     ChoiceOption,
     Formula,
+    Instrument,
     NCCalibration,
     NCVerification,
     RefrigerantDensity,
@@ -208,6 +211,14 @@ def sample_edit(request, pk):
     return render(request, "lab/sample_form.html", {"form": form, "sample": sample})
 
 
+def _picked(choices, wanted):
+    """The calibration for the instrument chosen in a GC switcher, else the first usable one."""
+    for instrument, calibration in choices:
+        if str(instrument.pk) == wanted and calibration:
+            return calibration
+    return next((calibration for _, calibration in choices if calibration), None)
+
+
 @login_required
 def sample_detail(request, pk):
     sample = get_object_or_404(Sample, pk=pk)
@@ -221,10 +232,16 @@ def sample_detail(request, pk):
             "results__formula"
         )
     )
-    calibration = sample.blend.active_calibration() if sample.blend else None
-    nc_calibration = None
+    instruments = list(Instrument.objects.filter(active=True))
+    # GC switchers: each instrument with its usable calibration (or None), and the one picked.
+    gc_choices, calibration = [], None
+    if sample.blend and any(t.test_method.calc_type == TestMethod.CALC_BLEND for t in tests):
+        gc_choices = [(i, sample.blend.active_calibration(instrument=i)) for i in instruments]
+        calibration = _picked(gc_choices, request.GET.get("gc"))
+    nc_choices, nc_calibration = [], None
     if any(t.test_method.calc_type == TestMethod.CALC_NC for t in tests):
-        nc_calibration = NCCalibration.active()
+        nc_choices = [(i, NCCalibration.active(instrument=i)) for i in instruments]
+        nc_calibration = _picked(nc_choices, request.GET.get("nc_gc"))
     entries = []
     for test in tests:
         formula = None
@@ -252,7 +269,9 @@ def sample_detail(request, pk):
             "calibration_components": calibration.components.select_related("component")
             if calibration
             else [],
+            "gc_choices": gc_choices,
             "nc_calibration": nc_calibration,
+            "nc_choices": nc_choices,
             "nc_replicates": range(1, 5),
             "refrigerant_density": RefrigerantDensity.lookup(sample.refrigerant_type),
             "status_choices": SampleTest.STATUS_CHOICES,
@@ -434,60 +453,77 @@ def _calibration_warnings():
     """Sample log banners: calibrations about to expire and verifications that need redoing."""
     today = timezone.localdate()
     warnings = []
-    for blend in Blend.objects.filter(active=True):
-        latest = blend.calibrations.filter(expires_on__gte=today).first()
-        if latest is None:
-            continue
-        if latest.expires_on <= today + timedelta(days=EXPIRY_WARNING_DAYS):
-            warnings.append(
-                {
-                    "text": f"The {blend} calibration expires on {latest.expires_on:%m/%d/%Y}.",
-                    "url": reverse("lab:calibration_create") + f"?blend={blend.pk}",
-                    "link": "Calibrate now",
-                }
-            )
-        if latest.status == Calibration.STATUS_REVERIFY:
-            warnings.append(
-                {
-                    "text": f"The {blend} verification has expired; blend results can't be entered until it's verified again.",
-                    "url": reverse("lab:verification_create", args=[latest.pk]),
-                    "link": "Verify now",
-                }
-            )
+    for instrument in Instrument.objects.filter(active=True):
+        for blend in Blend.objects.filter(active=True):
+            latest = blend.calibrations.filter(instrument=instrument, expires_on__gte=today).first()
+            if latest is None:
+                continue
+            if latest.expires_on <= today + timedelta(days=EXPIRY_WARNING_DAYS):
+                warnings.append(
+                    {
+                        "text": f"The {blend} calibration on {instrument} expires on {latest.expires_on:%m/%d/%Y}.",
+                        "url": reverse("lab:calibration_create") + f"?gc={instrument.pk}&blend={blend.pk}",
+                        "link": "Calibrate now",
+                    }
+                )
+            if latest.status == Calibration.STATUS_REVERIFY:
+                warnings.append(
+                    {
+                        "text": f"The {blend} verification on {instrument} has expired; "
+                        "blend results can't use it until it's verified again.",
+                        "url": reverse("lab:verification_create", args=[latest.pk]),
+                        "link": "Verify now",
+                    }
+                )
     return warnings
+
+
+def _instrument_from_request(request, required=False):
+    """The active instrument named by ?gc=, or None (404 if it's required and missing)."""
+    value = request.GET.get("gc") or request.POST.get("gc")
+    if value:
+        return get_object_or_404(Instrument, pk=value, active=True)
+    if required:
+        raise Http404("Choose an instrument.")
+    return None
 
 
 @login_required
 def calibration_list(request):
     today = timezone.localdate()
+    instruments = list(Instrument.objects.filter(active=True))
+    instrument = _instrument_from_request(request) or (instruments[0] if instruments else None)
     archive = request.GET.get("view") == "archive"
-    calibrations = Calibration.objects.select_related("blend", "performed_by", "standard")
-    if archive:
-        calibrations = calibrations.filter(expires_on__lt=today)
-    else:
-        calibrations = calibrations.filter(expires_on__gte=today)
     blend_id = request.GET.get("blend")
-    if blend_id:
-        calibrations = calibrations.filter(blend_id=blend_id)
 
-    blend_status = []
-    for blend in Blend.objects.filter(active=True):
-        latest = blend.calibrations.filter(expires_on__gte=today).first()
-        verification = latest.latest_verification if latest else None
-        blend_status.append((blend, latest, verification))
-    nc = NCCalibration.objects.filter(expires_on__gte=today).first()
+    calibrations = Calibration.objects.none()
+    blend_status, nc, nc_verification = [], None, None
+    if instrument:
+        calibrations = Calibration.objects.filter(instrument=instrument).select_related(
+            "blend", "performed_by", "standard"
+        )
+        calibrations = calibrations.filter(expires_on__lt=today) if archive else calibrations.filter(expires_on__gte=today)
+        if blend_id:
+            calibrations = calibrations.filter(blend_id=blend_id)
+        for blend in Blend.objects.filter(active=True):
+            latest = blend.calibrations.filter(instrument=instrument, expires_on__gte=today).first()
+            blend_status.append((blend, latest, latest.latest_verification if latest else None))
+        nc = NCCalibration.objects.filter(instrument=instrument, expires_on__gte=today).first()
+        nc_verification = nc.latest_verification if nc else None
     standards = StandardCylinder.objects.filter(status=StandardCylinder.STATUS_ON_HAND).select_related("blend")
     return render(
         request,
         "lab/calibration_list.html",
         {
+            "instruments": instruments,
+            "instrument": instrument,
             "calibrations": calibrations,
             "archive": archive,
             "blends": Blend.objects.all(),
             "blend_id": blend_id,
             "blend_status": blend_status,
             "nc": nc,
-            "nc_verification": nc.latest_verification if nc else None,
+            "nc_verification": nc_verification,
             "standards": standards,
         },
     )
@@ -499,22 +535,34 @@ def _blend_from_request(request):
     return None
 
 
+def _choose(request, title, with_blends=True):
+    return render(
+        request,
+        "lab/calibration_choose_blend.html",
+        {
+            "title": title,
+            "instruments": Instrument.objects.filter(active=True),
+            "selected_gc": request.GET.get("gc", ""),
+            "selected_blend": request.GET.get("blend", ""),
+            "blends": Blend.objects.filter(active=True) if with_blends else None,
+        },
+    )
+
+
 @login_required
 def calibration_create(request):
+    instrument = _instrument_from_request(request)
     blend = _blend_from_request(request)
-    if blend is None:
-        return render(
-            request,
-            "lab/calibration_choose_blend.html",
-            {"blends": Blend.objects.filter(active=True), "action": "Calibrate", "title": "New calibration"},
-        )
+    if instrument is None or blend is None:
+        return _choose(request, "New calibration")
     if not blend.components.exists():
         messages.error(request, f"{blend} has no components yet. Add them in Admin → Blends.")
-        return redirect("lab:calibration_list")
+        return redirect(reverse("lab:calibration_list") + f"?gc={instrument.pk}")
     form = CalibrationForm(request.POST or None, blend=blend)
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             calibration = form.save(commit=False)
+            calibration.instrument = instrument
             calibration.blend = blend
             calibration.performed_by = request.user
             calibration.save()
@@ -524,13 +572,13 @@ def calibration_create(request):
                 )
         messages.success(request, "Calibration saved. Run the verification next.")
         return redirect(calibration)
-    return render(request, "lab/calibration_form.html", {"form": form, "blend": blend})
+    return render(request, "lab/calibration_form.html", {"form": form, "blend": blend, "instrument": instrument})
 
 
 @login_required
 def calibration_detail(request, pk):
     calibration = get_object_or_404(
-        Calibration.objects.select_related("blend", "performed_by", "standard"), pk=pk
+        Calibration.objects.select_related("instrument", "blend", "performed_by", "standard"), pk=pk
     )
     components = calibration.component_rows()
     replicates = calibration.replicate_compositions()
@@ -645,14 +693,20 @@ def standard_edit(request, pk):
 
 @login_required
 def nc_calibration_create(request):
+    instrument = _instrument_from_request(request)
+    if instrument is None:
+        return _choose(request, "Non-condensables calibration", with_blends=False)
     form = NCCalibrationForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         calibration = form.save(commit=False)
+        calibration.instrument = instrument
         calibration.performed_by = request.user
         calibration.save()
         messages.success(request, "Non-condensables calibration saved. Run the verification next.")
         return redirect(calibration)
-    return render(request, "lab/nc_form.html", {"form": form, "title": "Non-condensables calibration"})
+    return render(
+        request, "lab/nc_form.html", {"form": form, "title": f"Non-condensables calibration on {instrument}"}
+    )
 
 
 @login_required
@@ -675,7 +729,9 @@ def nc_verification_create(request, pk):
     if calibration.is_expired:
         messages.error(request, "This calibration has expired and is read-only.")
         return redirect(calibration)
-    previous = NCVerification.objects.order_by("-performed_on", "-id").first()
+    previous = NCVerification.objects.filter(calibration__instrument=calibration.instrument).order_by(
+        "-performed_on", "-id"
+    ).first() or NCVerification.objects.order_by("-performed_on", "-id").first()
     initial = {"max_error_percent": previous.max_error_percent} if previous else {}
     form = NCVerificationForm(request.POST or None, initial=initial)
     if request.method == "POST" and form.is_valid():
@@ -696,6 +752,55 @@ def nc_verification_create(request, pk):
         "lab/nc_form.html",
         {"form": form, "title": f"Verify {calibration}", "calibration": calibration},
     )
+
+
+# --- Instruments ------------------------------------------------------------------
+
+
+def staff_required(view):
+    """Only users with Admin access (staff) can manage instruments."""
+
+    @login_required
+    def wrapped(request, *args, **kwargs):
+        if not request.user.is_staff:
+            raise PermissionDenied("Only administrators can manage instruments.")
+        return view(request, *args, **kwargs)
+
+    return wrapped
+
+
+@staff_required
+def instrument_list(request):
+    add_form = InstrumentForm(request.POST if request.POST.get("action") == "add" else None, prefix="new")
+    if request.method == "POST" and request.POST.get("action") == "add" and add_form.is_valid():
+        instrument = add_form.save()
+        messages.success(request, f"{instrument} added.")
+        return redirect("lab:instrument_list")
+    instruments = Instrument.objects.annotate(
+        calibration_count=Count("calibrations", distinct=True) + Count("nc_calibrations", distinct=True)
+    )
+    rows = [(i, InstrumentForm(instance=i, prefix=f"i{i.pk}", form_id=f"instrument-{i.pk}")) for i in instruments]
+    return render(request, "lab/instrument_list.html", {"rows": rows, "add_form": add_form})
+
+
+@staff_required
+@require_POST
+def instrument_edit(request, pk):
+    instrument = get_object_or_404(Instrument, pk=pk)
+    if request.POST.get("action") == "delete":
+        if instrument.calibrations.exists() or instrument.nc_calibrations.exists():
+            messages.error(request, f"{instrument} has calibrations, so it can only be retired (untick Active).")
+        else:
+            instrument.delete()
+            messages.success(request, f"{instrument} removed.")
+        return redirect("lab:instrument_list")
+    form = InstrumentForm(request.POST, instance=instrument, prefix=f"i{pk}")
+    if form.is_valid():
+        form.save()
+        messages.success(request, f"{instrument} saved.")
+    else:
+        messages.error(request, "; ".join(e for errors in form.errors.values() for e in errors))
+    return redirect("lab:instrument_list")
 
 
 # --- Formulas ---------------------------------------------------------------

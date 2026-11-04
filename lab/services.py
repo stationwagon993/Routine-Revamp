@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from . import formulas
 from .models import (
+    Calibration,
     Formula,
     NCCalibration,
     RefrigerantDensity,
@@ -65,6 +66,21 @@ def calculate_formula(formula, values, sample_values=None):
     return value, reported
 
 
+def _chosen_calibration(model, pk, **match):
+    """The calibration picked on the sample page (the GC switcher), if it's still usable."""
+    if not pk:
+        return None
+    try:
+        calibration = model.objects.select_related("instrument").get(pk=pk, **match)
+    except (model.DoesNotExist, ValueError):
+        raise ResultError("That calibration isn't available.") from None
+    if not calibration.instrument.active or not calibration.is_usable():
+        raise ResultError(
+            f"The {calibration.instrument} calibration can't be used: it has expired or needs verifying."
+        )
+    return calibration
+
+
 def compute_results(sample_test, data):
     """
     Work out the results for one test from submitted form ``data`` without
@@ -105,10 +121,12 @@ def compute_results(sample_test, data):
                 f"{sample_test.sample.refrigerant_type or 'This refrigerant'} isn't set up as a blend yet. "
                 "Add it with its components under Admin → Blends."
             )
-        calibration = blend.active_calibration()
+        calibration = _chosen_calibration(Calibration, data.get("calibration_id"), blend=blend)
+        if calibration is None:
+            calibration = blend.active_calibration()
         if calibration is None:
             raise ResultError(
-                f"There is no current, verified calibration for {blend}. "
+                f"There is no current, verified {blend} calibration on any instrument. "
                 "Calibrate and verify before reporting blend results."
             )
         areas = {}
@@ -132,7 +150,9 @@ def compute_results(sample_test, data):
         return results, calibration
 
     if method.calc_type == TestMethod.CALC_NC:
-        calibration = NCCalibration.active()
+        calibration = _chosen_calibration(NCCalibration, data.get("nc_calibration_id"))
+        if calibration is None:
+            calibration = NCCalibration.active()
         if calibration is None:
             raise ResultError(
                 "There is no current, verified non-condensables calibration. "

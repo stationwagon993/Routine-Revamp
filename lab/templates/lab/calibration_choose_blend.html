@@ -3,10 +3,18 @@
 {% block content %}
 <h1>{{ title }}</h1>
 <form method="get" class="panel actions">
+  {% if instruments is not None %}
+  <label for="gc"><strong>Instrument:</strong></label>
+  <select name="gc" id="gc">
+    {% for i in instruments %}<option value="{{ i.pk }}" {% if i.pk|stringformat:"s" == selected_gc %}selected{% endif %}>{{ i }}</option>{% endfor %}
+  </select>
+  {% endif %}
+  {% if blends is not None %}
   <label for="blend"><strong>Blend:</strong></label>
   <select name="blend" id="blend">
-    {% for b in blends %}<option value="{{ b.pk }}">{{ b }}</option>{% endfor %}
+    {% for b in blends %}<option value="{{ b.pk }}" {% if b.pk|stringformat:"s" == selected_blend %}selected{% endif %}>{{ b }}</option>{% endfor %}
   </select>
+  {% endif %}
   <button type="submit">Continue</button>
 </form>
 {% endblock %}

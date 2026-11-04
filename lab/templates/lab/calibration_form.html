@@ -1,7 +1,7 @@
 {% extends "lab/base.html" %}
-{% block title %}Calibrate {{ blend }}{% endblock %}
+{% block title %}Calibrate {{ blend }} on {{ instrument }}{% endblock %}
 {% block content %}
-<h1>Calibrate {{ blend }}</h1>
+<h1>Calibrate {{ blend }} on {{ instrument }}</h1>
 <form method="post">
   {% csrf_token %}
   {{ form.non_field_errors }}
@@ -28,7 +28,7 @@
   </div>
   <div class="actions">
     <button type="submit">Save calibration</button>
-    <a href="{% url 'lab:calibration_list' %}">Cancel</a>
+    <a href="{% url 'lab:calibration_list' %}?gc={{ instrument.pk }}">Cancel</a>
   </div>
 </form>
 {% endblock %}

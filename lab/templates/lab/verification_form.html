@@ -2,7 +2,7 @@
 {% load lab_extras %}
 {% block title %}Verify {{ calibration }}{% endblock %}
 {% block content %}
-<h1>Verify {{ calibration.blend }} calibration ({{ calibration.performed_on|date:"m/d/Y" }})</h1>
+<h1>Verify {{ calibration.blend }} calibration on {{ calibration.instrument }} ({{ calibration.performed_on|date:"m/d/Y" }})</h1>
 <form method="post">
   {% csrf_token %}
   {{ form.non_field_errors }}

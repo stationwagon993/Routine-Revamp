@@ -2,8 +2,8 @@
 {% load lab_extras %}
 {% block title %}{{ calibration }}{% endblock %}
 {% block content %}
-<div class="actions" style="margin-bottom: 8px;"><a href="{% url 'lab:calibration_list' %}">← Calibrations</a></div>
-<h1>{{ calibration.blend }} calibration – {{ calibration.performed_on|date:"m/d/Y" }} <span class="pill {{ calibration.status }}">{{ calibration.status_label }}</span></h1>
+<div class="actions" style="margin-bottom: 8px;"><a href="{% url 'lab:calibration_list' %}?gc={{ calibration.instrument_id }}">← {{ calibration.instrument }} calibrations</a></div>
+<h1>{{ calibration.blend }} calibration on {{ calibration.instrument }} – {{ calibration.performed_on|date:"m/d/Y" }} <span class="pill {{ calibration.status }}">{{ calibration.status_label }}</span></h1>
 
 {% if calibration.status == "unverified" %}<div class="banner-warn">This calibration can't be used for results until a verification passes. <a href="{% url 'lab:verification_create' calibration.pk %}">Run verification</a></div>{% endif %}
 {% if calibration.status == "failed" %}<div class="banner-warn">The latest verification failed. Run another verification or recalibrate.</div>{% endif %}

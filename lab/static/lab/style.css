@@ -201,6 +201,13 @@ td.sample-no.oldest, table.log tbody tr:hover td.sample-no.oldest { background: 
 .pill.active, .pill.pass { background: #e1f4e6; color: var(--pass); border-color: #9fd6ad; }
 .pill.unverified, .pill.reverify { background: var(--warn-bg); border-color: var(--warn-border); }
 .nowrap { white-space: nowrap; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-bottom: -1px; }
+.tabs a { padding: 8px 16px; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; color: var(--text); text-decoration: none; font-weight: 600; }
+.tabs a:hover { background: #eef2f6; }
+.tabs a.current { background: var(--panel); border-color: var(--border); color: var(--accent); }
+.tab-panel { border-top-left-radius: 0; }
+.gc-switcher { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+.gc-switcher label { font-weight: 600; margin: 0; }
 .pill.failed, .pill.fail { background: #fde8e8; color: var(--fail); border-color: #f0a3a3; }
 .pill.expired { background: #e9ecef; color: var(--muted); border-color: #ccc; }
 .pill.draft { background: #e9ecef; }
